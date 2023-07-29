@@ -223,15 +223,14 @@ impl UpdatableOutput for FanSensor {
         self.update_input();
         let percentage = self.curve.lock().unwrap().get_value() as f32 / 100.;
         // TODO: implement start pwm
-        let mut min_pwm;
-        if self.is_spinning() {
-            min_pwm = self.min_pwm;
+        let mut min_pwm = if self.is_spinning() {
+            self.min_pwm
         } else {
-            min_pwm = self.start_pwm;
-        }
+            self.start_pwm
+        };
         min_pwm = (min_pwm + 3) * (percentage > 0.0) as u8;
         let pwm_range = 255 - min_pwm;
-        let pwm_val = percentage * pwm_range as f32 + min_pwm as f32;
+        let pwm_val = percentage.mul_add(pwm_range as f32, min_pwm as f32);
         self.fan_pwm.set_output(pwm_val as u8);
         trace!(
             "Got value {percentage} for fan {} pwm {pwm_val} min pwm {min_pwm}",

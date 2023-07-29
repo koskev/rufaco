@@ -40,7 +40,7 @@ impl LinearCurve {
             let m = (y.1 - y.0) as f32 / (x.1 - x.0) as f32;
             // y = mx + b
             //
-            let b = *y.0 as f32 - m * *x.0 as f32;
+            let b = m.mul_add(-*x.0 as f32, *y.0 as f32);
             println!("High {high:?} Low {low:?} m {m} b {b}");
             func_map.insert(*low.0, (m, b));
         }
@@ -59,15 +59,12 @@ impl ReadableValue for LinearCurve {
             .range((Bound::Unbounded, Bound::Included(input)))
             .next_back();
 
-        match before {
-            Some(val) => {
-                let m = val.1 .0;
-                let b = val.1 .1;
-                let x = input as f32;
-                (m * x + b) as i32
-            }
-            None => 0,
-        }
+        before.map_or(0, |val| {
+            let m = val.1 .0;
+            let b = val.1 .1;
+            let x = input as f32;
+            m.mul_add(x, b) as i32
+        })
     }
 }
 
@@ -95,11 +92,7 @@ impl ReadableValue for MaximumCurve {
             let val_b = b.lock().unwrap().get_value();
             val_a.cmp(&val_b)
         });
-        let x = match max {
-            Some(val) => val.lock().unwrap().get_value(),
-            None => 0,
-        };
-        x
+        max.map_or(0, |val| val.lock().unwrap().get_value())
     }
 }
 
@@ -143,11 +136,12 @@ impl ReadableValue for PidCurve {
     fn update_value(&mut self) {
         let input = self.sensor.lock().unwrap().get_value() as f32 / 1000.0;
         let output = self.pid.lock().unwrap().next_control_output(input);
-        let mut retval = 0;
 
-        if output.output < 0.0 {
-            retval = -(output.output as i32);
-        }
+        let retval = if output.output < 0.0 {
+            -(output.output as i32)
+        } else {
+            0
+        };
 
         debug!(
             "Pid {:?} with input {input} and target {} results in {retval}",
