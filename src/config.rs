@@ -9,6 +9,15 @@ pub struct HwmonConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct PidCurve {
+    pub sensor: String,
+    pub target: f32,
+    pub p: f32,
+    pub i: f32,
+    pub d: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct LinearCurve {
     pub sensor: String,
     pub steps: BTreeMap<i32, i32>,
@@ -37,6 +46,7 @@ pub enum CurveFunction {
     r#static(StaticCurve),
     maximum(MaximumCurve),
     average(AverageCurve),
+    pid(PidCurve),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

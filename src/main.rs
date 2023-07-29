@@ -1,4 +1,5 @@
 use log::{info, trace, warn};
+use rayon::prelude::IntoParallelRefIterator;
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
@@ -32,7 +33,10 @@ use signal_hook::{
 };
 use temperature::{TempSensor, TempSensorContainer};
 
-use crate::common::{UpdatableInput, UpdatableOutput};
+use crate::{
+    common::{UpdatableInput, UpdatableOutput},
+    curve::PidCurve,
+};
 
 // TODO: refactor fan and sensor
 fn load_hwmon_sensor(
@@ -78,6 +82,26 @@ fn load_hwmon_fan(
     (None, None)
 }
 
+fn get_sensor(
+    sensor_id: &str,
+    sensors: &HashMap<String, TempSensorContainer>,
+    curves: &HashMap<String, CurveContainer>,
+) -> ReadableValueContainer {
+    let sensor: ReadableValueContainer;
+    if sensors.contains_key(sensor_id) {
+        sensor = sensors[sensor_id].clone();
+    } else if curves.contains_key(sensor_id) {
+        sensor = curves[sensor_id].clone();
+    } else {
+        // FIXME: Configs are sensitive to the order.
+        todo!(
+            "Config doesn't contain {}! Be sure to place them in the correct order",
+            sensor_id
+        )
+    }
+    sensor
+}
+
 fn main() {
     TermLogger::init(
         log::LevelFilter::Debug,
@@ -110,20 +134,9 @@ fn main() {
         match &curveconf.function {
             config::CurveFunction::linear(curve) => {
                 // TODO: refactor to use function? Borrow problem
-                let sensor: ReadableValueContainer;
                 let sensor_id = &curve.sensor;
                 info!("Searching for {}", sensor_id);
-                if sensors.contains_key(sensor_id) {
-                    sensor = sensors[sensor_id].clone();
-                } else if curves.contains_key(sensor_id) {
-                    sensor = curves[sensor_id].clone();
-                } else {
-                    // FIXME: Configs are sensitive to the order.
-                    todo!(
-                        "Config doesn't contain {}! Be sure to place them in the correct order",
-                        sensor_id
-                    )
-                }
+                let sensor = get_sensor(sensor_id, &sensors, &curves);
                 curves.insert(
                     curveconf.id.clone(),
                     Arc::new(Mutex::new(LinearCurve::new(sensor, curve))),
@@ -136,18 +149,7 @@ fn main() {
             config::CurveFunction::maximum(curve) => {
                 let mut mc_sensors: Vec<ReadableValueContainer> = vec![];
                 for sensor_id in &curve.sensors {
-                    let sensor: ReadableValueContainer;
-                    if sensors.contains_key(sensor_id) {
-                        sensor = sensors[sensor_id].clone();
-                    } else if curves.contains_key(sensor_id) {
-                        sensor = curves[sensor_id].clone();
-                    } else {
-                        // FIXME: Configs are sensitive to the order.
-                        todo!(
-                            "Config doesn't contain {}! Be sure to place them in the correct order",
-                            sensor_id
-                        )
-                    }
+                    let sensor = get_sensor(sensor_id, &sensors, &curves);
                     mc_sensors.push(sensor);
                 }
                 let mc = MaximumCurve {
@@ -158,24 +160,19 @@ fn main() {
             config::CurveFunction::average(curve) => {
                 let mut ac_sensors: Vec<ReadableValueContainer> = vec![];
                 for sensor_id in &curve.sensors {
-                    let sensor: ReadableValueContainer;
-                    if sensors.contains_key(sensor_id) {
-                        sensor = sensors[sensor_id].clone();
-                    } else if curves.contains_key(sensor_id) {
-                        sensor = curves[sensor_id].clone();
-                    } else {
-                        // FIXME: Configs are sensitive to the order.
-                        todo!(
-                            "Config doesn't contain {}! Be sure to place them in the correct order",
-                            sensor_id
-                        )
-                    }
+                    let sensor = get_sensor(sensor_id, &sensors, &curves);
                     ac_sensors.push(sensor);
                 }
                 let ac = AverageCurve {
                     sensors: ac_sensors,
                 };
                 curves.insert(id, Arc::new(Mutex::new(ac)));
+            }
+            config::CurveFunction::pid(curve) => {
+                let sensor_id = &curve.sensor;
+                let sensor = get_sensor(sensor_id, &sensors, &curves);
+                let pid_curve = PidCurve::new(sensor, curve.p, curve.i, curve.d, curve.target);
+                curves.insert(id, Arc::new(Mutex::new(pid_curve)));
             }
         }
     }
@@ -214,6 +211,10 @@ fn main() {
         // First update all sensors
         sensors.iter_mut().for_each(|(_id, sensor)| {
             sensor.lock().unwrap().update_input();
+        });
+
+        curves.iter().for_each(|(_id, curve)| {
+            curve.lock().unwrap().update_value();
         });
 
         // Then update all fans

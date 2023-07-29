@@ -4,10 +4,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use pid::Pid;
+
 use crate::{
     common::{ReadableValue, ReadableValueContainer},
     config,
 };
+
+use log::debug;
 
 pub type CurveContainer = Arc<Mutex<dyn ReadableValue>>;
 
@@ -120,5 +124,51 @@ impl ReadableValue for AverageCurve {
             total += val.lock().unwrap().get_value();
         });
         total / self.sensors.len() as i32
+    }
+}
+
+pub struct PidCurve {
+    sensor: ReadableValueContainer,
+    /// PID is behind a mutex to allow get_value to be immutable self
+    pid: Arc<Mutex<Pid<f32>>>,
+    last_val: i32,
+}
+
+impl PidCurve {
+    pub fn new(sensor: ReadableValueContainer, p: f32, i: f32, d: f32, target: f32) -> Self {
+        let limit = 100.0;
+        let mut pid = Pid::new(target, limit);
+        pid.p(p, limit);
+        pid.i(i, limit);
+        pid.d(d, limit);
+        Self {
+            sensor,
+            pid: Arc::new(Mutex::new(pid)),
+            last_val: 0,
+        }
+    }
+}
+
+impl ReadableValue for PidCurve {
+    fn update_value(&mut self) {
+        let input = self.sensor.lock().unwrap().get_value() as f32 / 1000.0;
+        let output = self.pid.lock().unwrap().next_control_output(input);
+        let mut retval = 0;
+
+        if output.output < 0.0 {
+            retval = output.output as i32 * -1;
+        }
+
+        debug!(
+            "Pid {:?} with input {input} and target {} results in {retval}",
+            output,
+            self.pid.lock().unwrap().setpoint
+        );
+
+        self.last_val = retval;
+    }
+
+    fn get_value(&self) -> i32 {
+        self.last_val as i32
     }
 }

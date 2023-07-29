@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 pub trait ReadableValue {
     fn get_value(&self) -> i32;
+    fn update_value(&mut self) {}
 }
 
 pub trait UpdatableInput {
@@ -11,4 +12,5 @@ pub trait UpdatableInput {
 pub trait UpdatableOutput {
     fn update_output(&mut self);
 }
+
 pub type ReadableValueContainer = Arc<Mutex<dyn ReadableValue>>;

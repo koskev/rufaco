@@ -50,14 +50,51 @@ impl FanSensor {
     }
 }
 
-    fn get_rpm(&self) -> Result<AngularVelocity, libmedium::sensors::Error> {
-        self.fan_input.read_input()
-    }
+impl FanSensor {
+    pub fn measure_fancurve(&mut self, wait_time: Duration, max_rpm_diff: i32) {
+        debug!("Measuring fan {}", self.id);
+        let mut pwm_map: HashMap<i32, i32> = HashMap::new();
+        for pwm in (0..255).rev() {
+            debug!("Setting fan {} to {}", self.id, pwm);
+            self.fan_pwm.write_pwm(units::Pwm::from_u8(pwm)).unwrap();
+            // Wait for rpm to settle
+            let mut max_diff = 10000;
+            let mut rpms: VecDeque<i32> = VecDeque::new();
+            let mut mean = 0;
+            while max_diff > max_rpm_diff {
+                thread::sleep(wait_time);
+                self.update_input();
+                let rpm = self.get_value();
+                rpms.push_front(rpm);
+                if rpms.len() > 5 {
+                    rpms.pop_back();
+                    mean = rpms.iter().sum::<i32>() / rpms.len() as i32;
+                    max_diff = *rpms
+                        .iter()
+                        .max_by(|a, b| {
+                            let diff_a = i32::abs(mean - *a);
+                            let diff_b = i32::abs(mean - *b);
 
-    fn set_output(&self, percent: i8) {
-        println!("{:?}", self.fan_pwm.hwmon_path());
-        self.fan_pwm.write_pwm(units::Pwm::from_u8(255)).unwrap();
-        //self.fan.write_pwm();
+                            diff_a.cmp(&diff_b)
+                        })
+                        .unwrap();
+                    max_diff = i32::abs(max_diff - mean);
+                    debug!(
+                        "Measured max diff of {} with vals {:?} and mean {mean} for fan {}",
+                        max_diff, rpms, self.id
+                    );
+                }
+                if mean == 0 {
+                    debug!("PWM min value is {}", pwm);
+                    // TODO: calc min start
+                    break;
+                }
+            }
+            let mean = rpms.iter().sum::<i32>() / rpms.len() as i32;
+            debug!("Value settled: {}", mean);
+            pwm_map.insert(pwm as i32, mean);
+        }
+        debug!("PWM map for {} is {:?}", self.id, pwm_map);
     }
 }
 
