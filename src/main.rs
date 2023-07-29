@@ -248,10 +248,10 @@ fn main() {
                         let mut f = std::fs::OpenOptions::new()
                             .write(true)
                             .create(true)
+                            .truncate(true)
                             .open("config.yaml")
                             .expect("Couldn't open config file");
-                        f.write_all(conf_string.as_bytes()).unwrap();
-                        //serde_yaml::to_writer(f, &rufaco_conf).unwrap();
+                        write!(f, "{}", conf_string).unwrap();
                     }
                 }
                 None => error!(

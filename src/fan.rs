@@ -118,26 +118,51 @@ impl FanSensor {
         stop_signal: Arc<AtomicBool>,
     ) -> Option<(u8, u8)> {
         debug!("Measuring fan {}", self.id);
-        for pwm in (0..255) {
-            debug!("Setting fan {} to {}", self.id, pwm);
+        let mut max_pwm = 255u8;
+        let mut min_pwm = 0u8;
+        // stop fan to actually measure start pwm
+        let rpm = self
+            .measure_pwm(0, max_rpm_diff, wait_time, stop_signal.clone())
+            .unwrap();
+        // Fan does not stop
+        if rpm != 0 {
+            max_pwm = 0;
+            min_pwm = 0;
+        }
+        loop {
+            // If they are one apart min has 0 rpm and max has the start rpm
+            if max_pwm - min_pwm <= 1 {
+                break;
+            }
+            let pwm = (max_pwm - min_pwm) / 2 + min_pwm;
+            debug!("max_pwm {max_pwm} min_pwm {min_pwm}");
+            debug!("##Setting fan {} to {}", self.id, pwm);
             let rpm = self.measure_pwm(pwm, max_rpm_diff, wait_time, stop_signal.clone());
             match rpm {
                 Some(rpm) => {
                     debug!("Settled rpm {rpm} with pwm {pwm}");
                     if rpm != 0 {
-                        debug!("Rpm is != 0. Found start pwm: {pwm}");
+                        max_pwm = pwm;
+                        debug!("Rpm is != 0. Found new lowest start pwm: {pwm}");
                         self.start_pwm = pwm;
-                        break;
+                        // stop fan to actually measure start pwm
+                        self.measure_pwm(0, max_rpm_diff, wait_time, stop_signal.clone());
+                    } else {
+                        min_pwm = pwm;
                     }
                 }
+                // SIGINT received
                 None => return None,
             }
         }
+        debug!("Found start pwm: {max_pwm}");
         // Set to 0 in case the fan never stops
         self.min_pwm = 0;
         debug!("Finding min_pwm for {}", self.id);
         // Measure min pwm
-        for pwm in (0..self.start_pwm).rev() {
+        self.measure_pwm(255, max_rpm_diff, wait_time, stop_signal.clone())
+            .unwrap();
+        for pwm in (0..self.start_pwm + 3).rev() {
             let rpm = self.measure_pwm(pwm, max_rpm_diff, wait_time, stop_signal.clone());
             match rpm {
                 Some(rpm) => {
