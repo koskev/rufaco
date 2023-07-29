@@ -1,24 +1,10 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    ops::IndexMut,
     vec,
 };
 
-use libmedium::{hwmon::Hwmons, parse_hwmons};
-use log::info;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    common::{ReadableValue, ReadableValueContainer},
-    curve::{self, CurveContainer},
-    fan::{FanContainer, FanSensor},
-    hwmon,
-    temperature::{TempSensor, TempSensorContainer},
-};
-
-trait Curve {
-    fn get_sensor_ids(&self) -> Vec<String>;
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HwmonConfig {
@@ -26,7 +12,7 @@ pub struct HwmonConfig {
     pub name: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PidCurve {
     pub sensor: String,
     pub target: f32,
@@ -35,58 +21,28 @@ pub struct PidCurve {
     pub d: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LinearCurve {
     pub sensor: String,
     pub steps: BTreeMap<i32, i32>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StaticCurve {
     pub value: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MaximumCurve {
     pub sensors: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AverageCurve {
     pub sensors: Vec<String>,
 }
 
-impl Curve for AverageCurve {
-    fn get_sensor_ids(&self) -> Vec<String> {
-        self.sensors.clone()
-    }
-}
-
-impl Curve for MaximumCurve {
-    fn get_sensor_ids(&self) -> Vec<String> {
-        self.sensors.clone()
-    }
-}
-
-impl Curve for StaticCurve {
-    fn get_sensor_ids(&self) -> Vec<String> {
-        vec![]
-    }
-}
-
-impl Curve for LinearCurve {
-    fn get_sensor_ids(&self) -> Vec<String> {
-        vec![self.sensor.clone()]
-    }
-}
-
-impl Curve for PidCurve {
-    fn get_sensor_ids(&self) -> Vec<String> {
-        vec![self.sensor.clone()]
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 #[allow(non_camel_case_types)]
 pub enum CurveFunction {
@@ -95,6 +51,18 @@ pub enum CurveFunction {
     maximum(MaximumCurve),
     average(AverageCurve),
     pid(PidCurve),
+}
+
+impl CurveFunction {
+    fn get_sensor_ids(&self) -> Vec<String> {
+        match self {
+            CurveFunction::linear(curve) => vec![curve.sensor.clone()],
+            CurveFunction::pid(curve) => vec![curve.sensor.clone()],
+            CurveFunction::r#static(_curve) => vec![],
+            CurveFunction::maximum(curve) => curve.sensors.clone(),
+            CurveFunction::average(curve) => curve.sensors.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
