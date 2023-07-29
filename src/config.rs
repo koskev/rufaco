@@ -107,17 +107,99 @@ pub fn load_config(path: &str) -> RufacoConfig {
     config_yaml
 }
 
-struct Edge {
-    from: String,
-    to: String,
-}
-
-struct Node {
-    id: String,
-}
-
 impl RufacoConfig {
-    fn validate(&mut self) -> bool {
+    fn validate(&self) -> bool {
+        let graph: HashMap<String, CurveFunction> = self
+            .curves
+            .iter()
+            .map(|curve| (curve.id.clone(), curve.function.clone()))
+            .collect();
+        let sensors: HashSet<String> = self
+            .sensors
+            .iter()
+            .map(|sensor| sensor.id.clone())
+            .collect();
+
+        // Ensure every curve is valid
+        for (_node_id, func) in graph.iter() {
+            for sensor_id in func.get_sensor_ids() {
+                // sensor neither in curves nor sensors -> invalid config
+                if !graph.contains_key(&sensor_id) && !sensors.contains(&sensor_id) {
+                    return false;
+                }
+            }
+        }
+
+        // Check for cycles
+
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::{SensorConfig, SensorType};
+
+    use super::{CurveFunction, FanCurve, RufacoConfig};
+
+    #[test]
+    fn minimal_config() {
+        let test_sensor = SensorType::file("test".to_string());
+        let test_sensor2 = SensorType::file("test".to_string());
+        let sensor_config = SensorConfig {
+            id: "test_sensor1".to_string(),
+            sensor: test_sensor,
+        };
+        let sensor_config2 = SensorConfig {
+            id: "test_sensor2".to_string(),
+            sensor: test_sensor2,
+        };
+        let curve_func = CurveFunction::maximum(super::MaximumCurve {
+            sensors: vec!["test_sensor1".to_string(), "test_sensor2".to_string()],
+        });
+        let curve = FanCurve {
+            id: "test_curve".to_string(),
+            function: curve_func,
+        };
+        let curves = vec![curve];
+        let conf = RufacoConfig {
+            sensors: vec![sensor_config, sensor_config2],
+            fans: vec![],
+            curves,
+        };
+
+        assert!(conf.validate());
+        let conf_empty = RufacoConfig {
+            sensors: vec![],
+            fans: vec![],
+            curves: vec![],
+        };
+        assert!(conf_empty.validate());
+    }
+
+    #[test]
+    fn non_existing_sensor_config() {
+        let test_sensor = SensorType::file("test".to_string());
+        let sensor_config = SensorConfig {
+            id: "test_sensor1".to_string(),
+            sensor: test_sensor,
+        };
+        let curve_func = CurveFunction::maximum(super::MaximumCurve {
+            sensors: vec!["invalid".to_string()],
+        });
+        let curve = FanCurve {
+            id: "test_curve".to_string(),
+            function: curve_func,
+        };
+        let curves = vec![curve];
+        //pub fans: Vec<FanConfig>,
+        //pub curves: Vec<FanCurve>,
+        let conf = RufacoConfig {
+            sensors: vec![sensor_config],
+            fans: vec![],
+            curves,
+        };
+
+        assert!(!conf.validate());
     }
 }
