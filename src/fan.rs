@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
+    error::Error,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -12,7 +13,7 @@ use libmedium::{
     sensors::{fan::WriteableFanSensor, pwm::WriteablePwmSensor},
     units::{self, AngularVelocity},
 };
-use log::{debug, error, warn};
+use log::*;
 
 use crate::{
     common::{ReadableValue, UpdatableInput, UpdatableOutput},
@@ -20,12 +21,53 @@ use crate::{
     curve::CurveContainer,
 };
 
+#[cfg(test)]
+use mockall::automock;
+
 pub type FanContainer = Arc<Mutex<FanSensor>>;
+
+pub struct HwmonFan {
+    pub fan_input: Box<dyn WriteableFanSensor>,
+}
+
+pub struct HwmonPwm {
+    pub fan_pwm: Box<dyn WriteablePwmSensor>,
+}
+
+#[cfg_attr(test, automock)]
+pub trait FanInput {
+    fn get_input(&self) -> Result<AngularVelocity, Box<dyn Error>>;
+}
+
+pub trait FanOutput {
+    fn set_output(&mut self, pwm: u8);
+    fn get_output(&self) -> u8;
+}
+
+impl FanOutput for HwmonPwm {
+    fn set_output(&mut self, pwm: u8) {
+        self.fan_pwm.write_pwm(units::Pwm::from_u8(pwm)).unwrap();
+    }
+
+    fn get_output(&self) -> u8 {
+        self.fan_pwm.read_pwm().unwrap().as_u8()
+    }
+}
+
+impl FanInput for HwmonFan {
+    fn get_input(&self) -> Result<AngularVelocity, Box<dyn Error>> {
+        let val: Result<AngularVelocity, libmedium::sensors::Error> = self.fan_input.read_input();
+        match val {
+            Ok(speed) => return Ok(speed),
+            Err(err) => return Err(Box::new(err)),
+        }
+    }
+}
 
 pub struct FanSensor {
     pub id: String,
-    pub fan_input: Box<dyn WriteableFanSensor>,
-    pub fan_pwm: Box<dyn WriteablePwmSensor>,
+    pub fan_input: Box<dyn FanInput>,
+    pub fan_pwm: Box<dyn FanOutput>,
     pub curve: CurveContainer,
     pub last_val: u32,
     /// Min PWM to keep the fan spinning
@@ -37,8 +79,8 @@ pub struct FanSensor {
 impl FanSensor {
     pub fn new(
         conf: &FanConfig,
-        fan_input: Box<dyn WriteableFanSensor>,
-        fan_pwm: Box<dyn WriteablePwmSensor>,
+        fan_input: Box<dyn FanInput>,
+        fan_pwm: Box<dyn FanOutput>,
         curve: CurveContainer,
     ) -> Self {
         let min_pwm = match conf.minpwm {
@@ -74,9 +116,7 @@ impl FanSensor {
         stop_signal: Arc<AtomicBool>,
     ) -> Option<i32> {
         debug!("Measuring fan {} with pwm of {}", self.id, pwm);
-        self.fan_pwm
-            .write_pwm(units::Pwm::from_u8(pwm as u8))
-            .unwrap();
+        self.fan_pwm.set_output(pwm);
         let mut max_diff = 10000;
         let mut rpms: VecDeque<i32> = VecDeque::new();
         let mut mean = 0;
@@ -191,25 +231,24 @@ impl UpdatableOutput for FanSensor {
         // TODO: implement start pwm
         let mut min_pwm;
         if self.is_spinning() {
-            min_pwm = self.start_pwm;
+            min_pwm = self.min_pwm;
         } else {
             min_pwm = self.start_pwm;
         }
         min_pwm = (min_pwm + 3) * (percentage > 0.0) as u8;
         let pwm_range = 255 - min_pwm;
-        let mut pwm_val = percentage * pwm_range as f32;
-        pwm_val = f32::max(self.min_pwm as f32, pwm_val);
-        let _ = self
-            .fan_pwm
-            .write_pwm(units::Pwm::from_u8(pwm_val as u8))
-            .unwrap();
-        //println!("Got value {val} for fan {} pwm {pwm_val}", self.id);
+        let pwm_val = percentage * pwm_range as f32 + min_pwm as f32;
+        let _ = self.fan_pwm.set_output(pwm_val as u8);
+        trace!(
+            "Got value {percentage} for fan {} pwm {pwm_val} min pwm {min_pwm}",
+            self.id,
+        );
     }
 }
 
 impl UpdatableInput for FanSensor {
     fn update_input(&mut self) {
-        let val: Result<AngularVelocity, libmedium::sensors::Error> = self.fan_input.read_input();
+        let val: Result<AngularVelocity, Box<dyn Error>> = self.fan_input.get_input();
         match val {
             Ok(speed) => self.last_val = speed.as_rpm(),
             Err(err) => error!("Failed to read sensor {} with error {}", self.id, err),
@@ -220,5 +259,85 @@ impl UpdatableInput for FanSensor {
 impl ReadableValue for FanSensor {
     fn get_value(&self) -> i32 {
         self.last_val as i32
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use more_asserts::{assert_ge, assert_le};
+    use simplelog::{ColorChoice, TermLogger, TerminalMode};
+
+    use crate::curve::StaticCurve;
+
+    use super::*;
+
+    struct DummyPwm {
+        last_val: u8,
+    }
+
+    impl FanOutput for DummyPwm {
+        fn set_output(&mut self, pwm: u8) {
+            self.last_val = pwm;
+        }
+        fn get_output(&self) -> u8 {
+            self.last_val
+        }
+    }
+
+    fn init() -> (FanSensor, Arc<Mutex<u32>>, Arc<Mutex<StaticCurve>>) {
+        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 0 }));
+        let fan_input_val = Arc::new(Mutex::new(0u32));
+        let fan_input_val_2 = fan_input_val.clone();
+        let mut fan_input = Box::new(MockFanInput::new());
+        fan_input.expect_get_input().returning(move || {
+            let val = AngularVelocity::from_rpm(fan_input_val.lock().unwrap().clone());
+            Ok(val)
+        });
+        let fan = FanSensor {
+            id: "test_sensor".to_string(),
+            min_pwm: 21,
+            start_pwm: 42,
+            last_val: 0,
+            curve: static_sensor.clone(),
+            fan_pwm: Box::new(DummyPwm { last_val: 0 }),
+            fan_input,
+        };
+        (fan, fan_input_val_2, static_sensor)
+    }
+
+    #[test]
+    fn test_spinning() {
+        let (mut fan, fan_input_val, _static_sensor) = init();
+        fan.update_input();
+        assert_eq!(fan.get_value(), 0);
+        assert!(!fan.is_spinning());
+        *fan_input_val.lock().unwrap() = 4242;
+        fan.update_input();
+        assert_eq!(fan.get_value(), 4242);
+        assert!(fan.is_spinning());
+    }
+
+    #[test]
+    fn test_fan() {
+        let (mut fan, fan_input_val, static_sensor) = init();
+
+        fan.update_output();
+        assert_eq!(fan.fan_pwm.get_output(), 0);
+        static_sensor.lock().unwrap().value = 100;
+        fan.update_output();
+        assert_eq!(fan.fan_pwm.get_output(), 255);
+        static_sensor.lock().unwrap().value = 0;
+        *fan_input_val.lock().unwrap() = 0;
+        fan.update_output();
+        assert_eq!(fan.fan_pwm.get_output(), 0);
+        assert_eq!(fan.get_value(), 0);
+        static_sensor.lock().unwrap().value = 1;
+        fan.update_output();
+        *fan_input_val.lock().unwrap() = 4242;
+        fan.update_input();
+        assert_ge!(fan.fan_pwm.get_output(), 42);
+        fan.update_output();
+        assert_le!(fan.fan_pwm.get_output(), 42);
+        assert_ge!(fan.fan_pwm.get_output(), 21);
     }
 }

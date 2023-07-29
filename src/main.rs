@@ -1,6 +1,5 @@
 use clap::Parser;
 use log::{debug, error, info, trace, warn};
-use rayon::prelude::IntoParallelRefIterator;
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
@@ -28,7 +27,7 @@ mod curve;
 mod fan;
 mod temperature;
 
-use fan::{FanContainer, FanSensor};
+use fan::{FanContainer, FanInput, FanOutput, FanSensor};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     iterator::Signals,
@@ -38,6 +37,7 @@ use temperature::{TempSensor, TempSensorContainer};
 use crate::{
     common::{UpdatableInput, UpdatableOutput},
     curve::PidCurve,
+    fan::{HwmonFan, HwmonPwm},
 };
 
 // TODO: refactor fan and sensor
@@ -64,10 +64,7 @@ fn load_hwmon_fan(
     hwmons: &Hwmons,
     chip_name: &String,
     sensor_name: &String,
-) -> (
-    Option<Box<dyn WriteableFanSensor>>,
-    Option<Box<dyn WriteablePwmSensor>>,
-) {
+) -> (Option<Box<dyn FanInput>>, Option<Box<dyn FanOutput>>) {
     // Load hwmon
     info!("Loading hwmon config with name {}", chip_name);
     for hwmon in hwmons.hwmons_by_name(chip_name) {
@@ -75,8 +72,12 @@ fn load_hwmon_fan(
         for (_, temp) in hwmon.writeable_fans() {
             if sensor_name == &temp.name() {
                 info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
-                let fan_input = Box::new(temp.clone());
-                let fan_pwm = Box::new(hwmon.writeable_pwm(temp.index()).unwrap().clone());
+                let fan_input = Box::new(HwmonFan {
+                    fan_input: Box::new(temp.clone()),
+                });
+                let fan_pwm = Box::new(HwmonPwm {
+                    fan_pwm: Box::new(hwmon.writeable_pwm(temp.index()).unwrap().clone()),
+                });
                 return (Some(fan_input), Some(fan_pwm));
             }
         }
@@ -107,11 +108,6 @@ fn get_sensor(
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Measure fan min and start pwm. This will overwrite config.yaml (removes all comments and
-    /// might change the order)
-    #[arg(long, default_value_t = false)]
-    measure_fans: bool,
-
     /// Delay between fan measurements
     #[arg(long, default_value_t = 1000)]
     measure_delay: u64,
@@ -223,45 +219,44 @@ fn main() {
         }
     });
 
-    if args.measure_fans {
-        info!("Measuring fans!");
-        fans.iter().for_each(|(_id, fan_mutex)| {
-            let mut fan = fan_mutex.lock().unwrap();
-            let conf = rufaco_conf.fans.iter_mut().find(|val| val.id == fan.id);
-            match conf {
-                Some(conf) => {
-                    // If any of the pwm settings is none we create them.
-                    if conf.minpwm.is_none() || conf.startpwm.is_none() {
-                        debug!("Measring fan {}", fan.id);
-                        let (min_pwm, start_pwm) = fan
-                            .measure_fan(
-                                Duration::from_millis(args.measure_delay),
-                                30,
-                                running.clone(),
-                            )
-                            .unwrap();
-                        conf.minpwm = Some(min_pwm);
-                        conf.startpwm = Some(start_pwm);
-                        // Write config
-                        let conf_string = serde_yaml::to_string(&rufaco_conf).unwrap();
-                        debug!("Writing config {:?}", conf_string);
-                        let mut f = std::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(true)
-                            .open("config.yaml")
-                            .expect("Couldn't open config file");
-                        write!(f, "{}", conf_string).unwrap();
-                    }
+    fans.iter().for_each(|(_id, fan_mutex)| {
+        let mut fan = fan_mutex.lock().unwrap();
+        let conf = rufaco_conf.fans.iter_mut().find(|val| val.id == fan.id);
+        match conf {
+            Some(conf) => {
+                // If any of the pwm settings is none we create them.
+                if conf.minpwm.is_none() || conf.startpwm.is_none() {
+                    warn!(
+                        "Fan {} does not have minpwm or startpwm configured. Measuring now...",
+                        fan.id
+                    );
+                    let (min_pwm, start_pwm) = fan
+                        .measure_fan(
+                            Duration::from_millis(args.measure_delay),
+                            30,
+                            running.clone(),
+                        )
+                        .unwrap();
+                    conf.minpwm = Some(min_pwm);
+                    conf.startpwm = Some(start_pwm);
+                    // Write config
+                    let conf_string = serde_yaml::to_string(&rufaco_conf).unwrap();
+                    debug!("Writing config {:?}", conf_string);
+                    let mut f = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open("config.yaml")
+                        .expect("Couldn't open config file");
+                    write!(f, "{}", conf_string).unwrap();
                 }
-                None => error!(
-                    "Unable to find config with id {}. This should never happen!",
-                    fan.id
-                ),
             }
-        });
-        return;
-    }
+            None => error!(
+                "Unable to find config with id {}. This should never happen!",
+                fan.id
+            ),
+        }
+    });
 
     // Update
     while running.load(Ordering::SeqCst) {

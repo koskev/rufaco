@@ -172,3 +172,54 @@ impl ReadableValue for PidCurve {
         self.last_val as i32
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_curve_linear() {
+        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 0 }));
+        let mut curve_steps = BTreeMap::new();
+        curve_steps.insert(0, 10);
+        curve_steps.insert(100, 110);
+        curve_steps.insert(200, 310);
+        let curve_conf = config::LinearCurve {
+            sensor: "test".to_string(),
+            steps: curve_steps,
+        };
+        let linear_curve = LinearCurve::new(static_sensor, &curve_conf);
+
+        let curve_functions = &linear_curve.functions;
+        assert_eq!(curve_functions.len(), 2);
+        assert_eq!(curve_functions[&0].0, 1.0);
+        assert_eq!(curve_functions[&0].1, 10.0);
+        assert_eq!(curve_functions[&100].0, 2.0);
+        assert_eq!(curve_functions[&100].1, -90.0);
+    }
+
+    #[test]
+    fn test_curve_max() {
+        let static_sensor_low = Arc::new(Mutex::new(StaticCurve { value: 10 }));
+        let static_sensor_mid = Arc::new(Mutex::new(StaticCurve { value: 50 }));
+        let static_sensor_high = Arc::new(Mutex::new(StaticCurve { value: 100 }));
+        let sensors: Vec<Arc<Mutex<dyn ReadableValue>>> =
+            vec![static_sensor_low, static_sensor_mid, static_sensor_high];
+        let max_curve = MaximumCurve { sensors };
+
+        assert_eq!(max_curve.get_value(), 100);
+    }
+
+    #[test]
+    fn test_curve_avg() {
+        let static_sensor_low = Arc::new(Mutex::new(StaticCurve { value: 10 }));
+        let static_sensor_mid = Arc::new(Mutex::new(StaticCurve { value: 50 }));
+        let static_sensor_high = Arc::new(Mutex::new(StaticCurve { value: 100 }));
+        let sensors: Vec<Arc<Mutex<dyn ReadableValue>>> =
+            vec![static_sensor_low, static_sensor_mid, static_sensor_high];
+        let avg_curve = AverageCurve { sensors };
+
+        assert_eq!(avg_curve.get_value(), 53);
+    }
+}
