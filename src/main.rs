@@ -3,103 +3,29 @@ use log::{debug, error, info, warn};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
-    collections::HashMap,
     io::Write,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread,
     time::{self, Duration},
-};
-
-use common::ReadableValueContainer;
-use curve::{AverageCurve, CurveContainer, LinearCurve, MaximumCurve, StaticCurve};
-use libmedium::{
-    hwmon::Hwmons,
-    parse_hwmons,
-    sensors::{temp, Sensor},
 };
 
 mod common;
 mod config;
 mod curve;
 mod fan;
+mod fanhub;
+mod hwmon;
 mod temperature;
 
-use fan::{FanContainer, FanInput, FanOutput, FanSensor};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     iterator::Signals,
 };
-use temperature::{TempSensor, TempSensorContainer};
 
-use crate::{
-    common::{UpdatableInput, UpdatableOutput},
-    curve::PidCurve,
-    fan::{HwmonFan, HwmonPwm},
-};
-
-fn load_hwmon_sensor(
-    hwmons: &Hwmons,
-    chip_name: &String,
-    sensor_name: &String,
-) -> Option<Box<dyn temp::TempSensor>> {
-    // Load hwmon
-    info!("Loading hwmon config with name {}", chip_name);
-    for hwmon in hwmons.hwmons_by_name(chip_name) {
-        info!("Loading hwmon {:?}", hwmon.name());
-        for temp in hwmon.temps().values() {
-            if sensor_name == &temp.name() {
-                info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
-                return Some(Box::new(temp.clone()));
-            }
-        }
-    }
-    None
-}
-
-type FanInputOutput = (Option<Box<dyn FanInput>>, Option<Box<dyn FanOutput>>);
-fn load_hwmon_fan(hwmons: &Hwmons, chip_name: &String, sensor_name: &String) -> FanInputOutput {
-    // Load hwmon
-    info!("Loading hwmon config with name {}", chip_name);
-    for hwmon in hwmons.hwmons_by_name(chip_name) {
-        info!("Loading hwmon {:?}", hwmon.name());
-        for temp in hwmon.writeable_fans().values() {
-            if sensor_name == &temp.name() {
-                info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
-                let fan_input = Box::new(HwmonFan {
-                    fan_input: Box::new(temp.clone()),
-                });
-                let fan_pwm = Box::new(HwmonPwm {
-                    fan_pwm: Box::new(hwmon.writeable_pwm(temp.index()).unwrap().clone()),
-                });
-                return (Some(fan_input), Some(fan_pwm));
-            }
-        }
-    }
-    (None, None)
-}
-
-fn get_sensor(
-    sensor_id: &str,
-    sensors: &HashMap<String, TempSensorContainer>,
-    curves: &HashMap<String, CurveContainer>,
-) -> ReadableValueContainer {
-    let sensor: ReadableValueContainer;
-    if sensors.contains_key(sensor_id) {
-        sensor = sensors[sensor_id].clone();
-    } else if curves.contains_key(sensor_id) {
-        sensor = curves[sensor_id].clone();
-    } else {
-        // FIXME: Configs are sensitive to the order.
-        todo!(
-            "Config doesn't contain {}! Be sure to place them in the correct order",
-            sensor_id
-        )
-    }
-    sensor
-}
+use crate::common::UpdatableOutput;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -127,9 +53,14 @@ fn main() {
     )
     .unwrap();
 
+    #[allow(deprecated)]
+    let home_config = std::env::home_dir()
+        .unwrap()
+        .as_path()
+        .join(".config/rufaco/config.yaml");
     let config_search_paths = vec![
         "config.yaml",
-        "~/.config/rufaco/config.yaml",
+        home_config.to_str().unwrap(),
         "/etc/rufaco/config.yaml",
     ];
 
@@ -138,92 +69,13 @@ fn main() {
             info!("Loading config from {f}");
             true
         } else {
+            debug!("Config does not exist: {f}");
             false
         }
     });
 
     let mut rufaco_conf = config::load_config(selected_config.unwrap());
-    let hwmons = parse_hwmons().unwrap();
-    let mut sensors: HashMap<String, TempSensorContainer> = HashMap::new();
-    let mut fans: HashMap<String, FanContainer> = HashMap::new();
-    let mut curves: HashMap<String, CurveContainer> = HashMap::new();
-    for sensorconf in &rufaco_conf.sensors {
-        match &sensorconf.sensor {
-            config::SensorType::hwmon(conf) => {
-                let temp_sensor = load_hwmon_sensor(&hwmons, &conf.chip, &conf.name).unwrap();
-                let rufaco_sensor = Arc::new(Mutex::new(TempSensor::new(sensorconf, temp_sensor)));
-                let id = rufaco_sensor.lock().unwrap().id.clone();
-                sensors.insert(id, rufaco_sensor);
-            }
-            config::SensorType::file(_path) => todo!(),
-        }
-    }
-
-    for curveconf in &rufaco_conf.curves {
-        let id = curveconf.id.clone();
-        info!("Loading curve {id}");
-        match &curveconf.function {
-            config::CurveFunction::linear(curve) => {
-                let sensor_id = &curve.sensor;
-                info!("Searching for {}", sensor_id);
-                let sensor = get_sensor(sensor_id, &sensors, &curves);
-                curves.insert(
-                    curveconf.id.clone(),
-                    Arc::new(Mutex::new(LinearCurve::new(sensor, curve))),
-                );
-            }
-            config::CurveFunction::r#static(curve) => {
-                let sc = StaticCurve { value: curve.value };
-                curves.insert(id, Arc::new(Mutex::new(sc)));
-            }
-            config::CurveFunction::maximum(curve) => {
-                let mut mc_sensors: Vec<ReadableValueContainer> = vec![];
-                for sensor_id in &curve.sensors {
-                    let sensor = get_sensor(sensor_id, &sensors, &curves);
-                    mc_sensors.push(sensor);
-                }
-                let mc = MaximumCurve {
-                    sensors: mc_sensors,
-                };
-                curves.insert(id, Arc::new(Mutex::new(mc)));
-            }
-            config::CurveFunction::average(curve) => {
-                let mut ac_sensors: Vec<ReadableValueContainer> = vec![];
-                for sensor_id in &curve.sensors {
-                    let sensor = get_sensor(sensor_id, &sensors, &curves);
-                    ac_sensors.push(sensor);
-                }
-                let ac = AverageCurve {
-                    sensors: ac_sensors,
-                };
-                curves.insert(id, Arc::new(Mutex::new(ac)));
-            }
-            config::CurveFunction::pid(curve) => {
-                let sensor_id = &curve.sensor;
-                let sensor = get_sensor(sensor_id, &sensors, &curves);
-                let pid_curve = PidCurve::new(sensor, curve.p, curve.i, curve.d, curve.target);
-                curves.insert(id, Arc::new(Mutex::new(pid_curve)));
-            }
-        }
-    }
-
-    for sensorconf in &rufaco_conf.fans {
-        match &sensorconf.sensor {
-            config::SensorType::hwmon(conf) => {
-                let (fan_sensor, pwm_sensor) = load_hwmon_fan(&hwmons, &conf.chip, &conf.name);
-                let curve = curves[&sensorconf.curve].clone();
-                let rufaco_sensor = Arc::new(Mutex::new(FanSensor::new(
-                    sensorconf,
-                    fan_sensor.unwrap(),
-                    pwm_sensor.unwrap(),
-                    curve,
-                )));
-                let id = rufaco_sensor.lock().unwrap().id.clone();
-                fans.insert(id, rufaco_sensor);
-            }
-            config::SensorType::file(_path) => todo!(),
-        }
-    }
+    let mut fans = rufaco_conf.create_all_sensors();
 
     let running = Arc::new(AtomicBool::new(true));
     let mut stop_signal = Signals::new([SIGTERM, SIGINT]).unwrap();
@@ -236,6 +88,7 @@ fn main() {
         }
     });
 
+    // Create the fan parameters if they don't exist
     fans.iter().for_each(|(_id, fan_mutex)| {
         let mut fan = fan_mutex.lock().unwrap();
         let conf = rufaco_conf.fans.iter_mut().find(|val| val.id == fan.id);

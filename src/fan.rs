@@ -24,6 +24,7 @@ use crate::{
 #[cfg(test)]
 use mockall::automock;
 
+/// Mutex containing a [FanSensor]
 pub type FanContainer = Arc<Mutex<FanSensor>>;
 
 pub struct HwmonFan {
@@ -40,7 +41,10 @@ pub trait FanInput {
 }
 
 pub trait FanOutput {
+    /// Set the fan output to pwm
     fn set_output(&mut self, pwm: u8);
+
+    /// Get the currently set value
     fn get_output(&self) -> u8;
 }
 
@@ -66,7 +70,9 @@ impl FanInput for HwmonFan {
 
 pub struct FanSensor {
     pub id: String,
+    /// The fan input sensor
     pub fan_input: Box<dyn FanInput>,
+    /// The pwm output of the fan
     pub fan_pwm: Box<dyn FanOutput>,
     pub curve: CurveContainer,
     pub last_val: u32,
