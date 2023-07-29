@@ -1,8 +1,9 @@
-// Import all useful traits of this crate.
-use lm_sensors::prelude::*;
+use lm_sensors::chip::SharedChip;
 use regex::Regex;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
+use yaml_rust::{Yaml, YamlLoader};
 
 type SensorList<'a> = HashMap<String, HashMap<String, SensorType<'a>>>;
 
@@ -136,16 +137,33 @@ fn filter_chip_or_feature<
     sensors
 }
 
-fn filter_sensorlist(sensor_list: SensorList, filter: HashMap<String, Vec<String>>) {
+fn filter_sensorlist<'a>(
+    mut sensor_list: SensorList<'a>,
+    filter: &HashMap<String, Vec<String>>,
+) -> SensorList<'a> {
     let chips = filter_chip_or_feature(sensor_list.keys(), filter.keys());
+    let mut filtered_sensor_list: SensorList = HashMap::new();
     for (chip_filter, chip) in chips {
         // Matching sensor filter
         println!("{} {}", chip_filter, chip);
-        filter_chip_or_feature(
+        filtered_sensor_list.insert(chip.clone(), HashMap::new());
+        let features = filter_chip_or_feature(
             sensor_list.get(&chip).unwrap().keys(),
             filter.get(&chip_filter).unwrap(),
         );
+        for (_, feature) in features {
+            let sens: SensorType = sensor_list
+                .get_mut(&chip)
+                .unwrap()
+                .remove(&feature)
+                .unwrap();
+            filtered_sensor_list
+                .get_mut(&chip)
+                .unwrap()
+                .insert(feature, sens);
+        }
     }
+    filtered_sensor_list
 }
 
 fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
@@ -163,7 +181,7 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
                     //my_sensors.push(my_sensor);
                     found_sensors
                         .get_mut(&chip_name)
-                        .unwrap_or(&mut HashMap::new())
+                        .unwrap()
                         .insert(sensor_name.clone(), SensorType::Sensor(my_sensor));
                 }
                 Err(_) => (),
@@ -189,7 +207,7 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
                         let fan = Fan::new(Sensor::new(sensors, &subfeature), pwm_path);
                         found_sensors
                             .get_mut(&chip_name)
-                            .unwrap_or(&mut HashMap::new())
+                            .unwrap()
                             .insert(sensor_name.clone(), SensorType::Fan(fan));
                     }
                     //println!("{}", input_name);
@@ -201,8 +219,84 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
     found_sensors
 }
 
+enum SensorKind {
+    Hwmon,
+    File,
+}
+
+struct SensorConf {
+    sensor_id: String,
+    sensor_type: SensorKind,
+    values: HashMap<String, String>,
+}
+
+struct RufacoConf {
+    sensors: Vec<SensorConf>,
+}
+
+impl RufacoConf {
+    fn new() -> Self {
+        Self { sensors: vec![] }
+    }
+
+    fn add_sensor(&mut self, conf: SensorConf) {
+        self.sensors.push(conf);
+    }
+}
+
+impl SensorConf {
+    fn new(id: String, sensor_type: SensorKind, values: HashMap<String, String>) -> Self {
+        Self {
+            sensor_id: id,
+            sensor_type,
+            values,
+        }
+    }
+}
+
+fn load_config() -> RufacoConf {
+    let config_content = fs::read_to_string("config.yaml").unwrap_or_default();
+    let config_yaml = YamlLoader::load_from_str(&config_content).unwrap_or_default();
+    let mut conf = RufacoConf::new();
+    //println!("{:?}", config_yaml[0]);
+    for sensor in config_yaml[0]["sensors"].as_vec() {
+        let test = &sensor[0];
+        println!("{:?}", test.as_hash().unwrap());
+        let sensor_config = test.as_hash().unwrap();
+        let sensor_id = &sensor_config[&Yaml::String("id".to_string())]
+            .as_str()
+            .unwrap()
+            .to_string();
+        println!("Read sensor with ID: {}", sensor_id);
+        // TODO: check for possible types
+        let hw_conf_items: HashMap<String, String> = sensor_config
+            [&Yaml::String("hwmon".to_string())]
+            .as_vec()
+            .unwrap()[0]
+            .as_hash()
+            .unwrap()
+            .iter()
+            .map(|(key, val)| {
+                (
+                    key.as_str().unwrap().to_string(),
+                    val.as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        println!("{:?}", hw_conf_items);
+        let sensor_conf = SensorConf::new(sensor_id.clone(), SensorKind::Hwmon, hw_conf_items);
+        conf.add_sensor(sensor_conf);
+    }
+    conf
+}
+
 fn main() {
     let sensors = lm_sensors::Initializer::default().initialize().unwrap();
+    let conf = load_config();
+
+    for sensor in conf.sensors {
+        if sensor.sensor_type == SensorKind::Hwmon {}
+    }
 
     let mut sensor_filter: HashMap<String, Vec<String>> = HashMap::new();
     sensor_filter
@@ -211,5 +305,11 @@ fn main() {
         .push("Core 0".to_string());
     //print_chips_unsafe(&sensors);
     let all_sensors = get_all_sensors(&sensors);
-    filter_sensorlist(all_sensors, sensor_filter);
+    let filtered_sensors = filter_sensorlist(all_sensors, &sensor_filter);
+    for (chip, feature_list) in filtered_sensors {
+        println!("Chip: {}", chip);
+        for feature in feature_list {
+            println!("Feature: {}", feature.0);
+        }
+    }
 }
