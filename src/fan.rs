@@ -6,7 +6,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{self, Duration},
 };
 
 use libmedium::{
@@ -80,6 +80,12 @@ pub struct FanSensor {
     pub min_pwm: u8,
     /// PWM to start the fan
     pub start_pwm: u8,
+
+    /// Value the fan starts spinning at. Fan still spins below this value if it was spinning
+    /// previously
+    pub start_percent: f32,
+    /// Time the fan is at 0%. Used to prevent spin up and down loop
+    zero_percent_time: Option<time::Instant>,
 }
 
 impl FanSensor {
@@ -99,6 +105,8 @@ impl FanSensor {
             last_val: 0,
             min_pwm,
             start_pwm,
+            start_percent: 20.0,
+            zero_percent_time: None,
         }
     }
 }
@@ -234,7 +242,28 @@ impl UpdatableOutput for FanSensor {
         } else {
             self.start_pwm
         };
-        min_pwm = (min_pwm + 3) * (percentage > 0.0) as u8;
+
+        // add 3 for safety
+        //min_pwm = min_pwm + 3;
+
+        if percentage < self.start_percent && self.get_value() == 0 {
+            // set to 0 if the fan is not spinning and we are below start_percent
+            min_pwm = 0;
+        }
+
+        if percentage < 0.1 {
+            // fan is currenlty on. We don't use is spnning as we might be faster than the motor
+            match self.zero_percent_time {
+                Some(time) => {
+                    if time::Instant::now() - time > time::Duration::from_secs(10) {
+                        min_pwm = 0;
+                    }
+                }
+                None => self.zero_percent_time = Some(time::Instant::now()),
+            }
+        } else {
+            self.zero_percent_time = None;
+        }
         let pwm_range = 255 - min_pwm;
         let pwm_val = percentage.mul_add(pwm_range as f32, min_pwm as f32);
         self.fan_pwm.set_output(pwm_val as u8);
