@@ -6,7 +6,9 @@ struct Sensor<'a> {
     min_value: i32,
     max_value: i32,
     chip: lm_sensors::ChipRef<'a>,
-    feature: sensors_sys::sensors_feature,
+    raw_feature: sensors_sys::sensors_feature,
+    sensor_facility: &'a lm_sensors::LMSensors,
+    feature: lm_sensors::FeatureRef<'a>,
 }
 
 //struct Fan<'a> {
@@ -15,57 +17,44 @@ struct Sensor<'a> {
 //}
 
 impl Sensor<'_> {
-    fn new<'a>(chip: lm_sensors::ChipRef<'a>, feature: sensors_sys::sensors_feature) -> Sensor<'a> {
+    fn new<'a>(
+        chip: lm_sensors::ChipRef<'a>,
+        raw_feature: sensors_sys::sensors_feature,
+        sensor_facility: &'a lm_sensors::LMSensors,
+    ) -> Sensor<'a> {
+        let feature: lm_sensors::FeatureRef;
+        // FIXME: Since I am a Rust noob, I have no clue why I can't save a FeatureRef
+        unsafe {
+            feature = sensor_facility.new_feature_ref(chip, raw_feature.clone());
+        }
         let new_sensor = Sensor {
             max_value: 0,
             min_value: 0,
             value: 0,
-            feature,
             chip,
+            raw_feature,
+            sensor_facility,
+            feature,
         };
         new_sensor
     }
+
     fn print_value(&self) {
         println!("chip: {}", self.value);
+        println!("{}", self.get_feature().name().unwrap().unwrap());
+    }
+
+    fn get_feature(&self) -> lm_sensors::FeatureRef {
+        let feature: lm_sensors::FeatureRef;
+        // FIXME: Since I am a Rust noob, I have no clue why I can't save a FeatureRef
+        unsafe {
+            feature = self
+                .sensor_facility
+                .new_feature_ref(self.chip, &self.raw_feature);
+        }
+        feature
     }
 }
-
-//fn print_chips_unsafe(sensors: &lm_sensors::LMSensors) {
-//    let mut y = 0;
-//    let mut all_sensors = vec![];
-//    let mut detected_sensor = std::ptr::null();
-//    let mut my_sensors = vec![];
-//    loop {
-//        unsafe {
-//            detected_sensor = sensors_sys::sensors_get_detected_chips(std::ptr::null(), &mut y);
-//        }
-//        if detected_sensor.is_null() {
-//            break;
-//        }
-//        all_sensors.push(detected_sensor);
-//    }
-//
-//    for sensor in all_sensors {
-//        let chip;
-//        unsafe {
-//            chip = sensors.new_raw_chip(*sensor);
-//        }
-//        println!("chip: {}", chip);
-//        for feature in chip.feature_iter() {
-//            println!("feature: {}", feature);
-//            let new_sensor = Sensor {
-//                chip_name: "".to_string(),
-//                max_value: 0,
-//                min_value: 0,
-//                value: 0,
-//                feature: feature.clone(),
-//            };
-//            my_sensors.push(new_sensor);
-//            break;
-//        }
-//        //std::mem::forget(chip);
-//    }
-//}
 
 fn print_chips(sensors: &lm_sensors::LMSensors) {
     let mut my_sensors = vec![];
@@ -73,7 +62,7 @@ fn print_chips(sensors: &lm_sensors::LMSensors) {
         println!("chip: {}", chip);
         for feature in chip.feature_iter() {
             println!("feature: {}", feature);
-            let new_sensor = Sensor::new(chip, *feature.as_ref());
+            let new_sensor = Sensor::new(chip, *feature.as_ref(), sensors);
             my_sensors.push(new_sensor);
         }
     }
