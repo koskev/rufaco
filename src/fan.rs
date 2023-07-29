@@ -62,6 +62,10 @@ impl FanSensor {
 }
 
 impl FanSensor {
+    pub fn is_spinning(&self) -> bool {
+        self.get_value() != 0
+    }
+
     fn measure_pwm(
         &mut self,
         pwm: u8,
@@ -157,14 +161,22 @@ impl FanSensor {
 
 impl UpdatableOutput for FanSensor {
     fn update_output(&mut self) {
-        let val = self.curve.lock().unwrap().get_value();
+        self.update_input();
+        let percentage = self.curve.lock().unwrap().get_value() as f32 / 100.;
         // TODO: implement start pwm
-        let pwm_range = 255 - self.min_pwm;
-        let pwm_val =
-            (self.min_pwm + (val as f32 / 100. * pwm_range as f32) as u8) * (val > 0) as u8;
+        let mut min_pwm;
+        if self.is_spinning() {
+            min_pwm = self.start_pwm;
+        } else {
+            min_pwm = self.start_pwm;
+        }
+        min_pwm = (min_pwm + 3) * (percentage > 0.0) as u8;
+        let pwm_range = 255 - min_pwm;
+        let mut pwm_val = percentage * pwm_range as f32;
+        pwm_val = f32::max(self.min_pwm as f32, pwm_val);
         let _ = self
             .fan_pwm
-            .write_pwm(units::Pwm::from_u8(pwm_val))
+            .write_pwm(units::Pwm::from_u8(pwm_val as u8))
             .unwrap();
         //println!("Got value {val} for fan {} pwm {pwm_val}", self.id);
     }
