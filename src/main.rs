@@ -111,18 +111,25 @@ struct Args {
     /// Delay between fan measurements
     #[arg(long, default_value_t = 1000)]
     measure_delay: u64,
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() {
+    let args = Args::parse();
+
+    let verbosity = match args.verbose {
+        true => log::LevelFilter::Debug,
+        false => log::LevelFilter::Info,
+    };
+
     TermLogger::init(
-        log::LevelFilter::Debug,
+        verbosity,
         simplelog::Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
     )
     .unwrap();
-
-    let args = Args::parse();
 
     let mut rufaco_conf = config::load_config();
     let hwmons = parse_hwmons().unwrap();
