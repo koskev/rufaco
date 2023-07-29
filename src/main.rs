@@ -1,9 +1,11 @@
-use log::{info, trace, warn};
+use clap::Parser;
+use log::{debug, error, info, trace, warn};
 use rayon::prelude::IntoParallelRefIterator;
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
     collections::HashMap,
+    io::Write,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -102,6 +104,19 @@ fn get_sensor(
     sensor
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Measure fan min and start pwm. This will overwrite config.yaml (removes all comments and
+    /// might change the order)
+    #[arg(long, default_value_t = false)]
+    measure_fans: bool,
+
+    /// Delay between fan measurements
+    #[arg(long, default_value_t = 1000)]
+    measure_delay: u64,
+}
+
 fn main() {
     TermLogger::init(
         log::LevelFilter::Debug,
@@ -111,7 +126,9 @@ fn main() {
     )
     .unwrap();
 
-    let rufaco_conf = config::load_config();
+    let args = Args::parse();
+
+    let mut rufaco_conf = config::load_config();
     let hwmons = parse_hwmons().unwrap();
     let mut sensors: HashMap<String, TempSensorContainer> = HashMap::new();
     let mut fans: HashMap<String, FanContainer> = HashMap::new();
@@ -206,6 +223,46 @@ fn main() {
         }
     });
 
+    if args.measure_fans {
+        info!("Measuring fans!");
+        fans.iter().for_each(|(_id, fan_mutex)| {
+            let mut fan = fan_mutex.lock().unwrap();
+            let conf = rufaco_conf.fans.iter_mut().find(|val| val.id == fan.id);
+            match conf {
+                Some(conf) => {
+                    // If any of the pwm settings is none we create them.
+                    if conf.minpwm.is_none() || conf.startpwm.is_none() {
+                        debug!("Measring fan {}", fan.id);
+                        let (min_pwm, start_pwm) = fan
+                            .measure_fan(
+                                Duration::from_millis(args.measure_delay),
+                                30,
+                                running.clone(),
+                            )
+                            .unwrap();
+                        conf.minpwm = Some(min_pwm);
+                        conf.startpwm = Some(start_pwm);
+                        // Write config
+                        let conf_string = serde_yaml::to_string(&rufaco_conf).unwrap();
+                        debug!("Writing config {:?}", conf_string);
+                        let mut f = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .open("config.yaml")
+                            .expect("Couldn't open config file");
+                        f.write_all(conf_string.as_bytes()).unwrap();
+                        //serde_yaml::to_writer(f, &rufaco_conf).unwrap();
+                    }
+                }
+                None => error!(
+                    "Unable to find config with id {}. This should never happen!",
+                    fan.id
+                ),
+            }
+        });
+        return;
+    }
+
     // Update
     while running.load(Ordering::SeqCst) {
         // First update all sensors
@@ -219,9 +276,6 @@ fn main() {
 
         // Then update all fans
         fans.iter().for_each(|(_id, fan)| {
-            //fan.lock()
-            //    .unwrap()
-            //    .measure_fancurve(Duration::from_millis(100), 15);
             fan.lock().unwrap().update_output();
         });
         let sleep_duration = time::Duration::from_millis(100);

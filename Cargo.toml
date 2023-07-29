@@ -14,3 +14,4 @@ log = "0.4.17"
 simplelog = "0.12.0"
 rayon = "1.6.1"
 pid = "4.0.0"
+clap = { version = "4.0.32", features = ["derive"] }

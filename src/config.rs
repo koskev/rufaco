@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,8 +66,8 @@ pub struct SensorConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FanConfig {
     pub id: String,
-    pub startpwm: u8,
-    pub minpwm: u8,
+    pub startpwm: Option<u8>,
+    pub minpwm: Option<u8>,
     pub sensor: SensorType,
     pub curve: String,
 }
