@@ -131,7 +131,21 @@ fn main() {
     )
     .unwrap();
 
-    let mut rufaco_conf = config::load_config();
+    let config_search_paths = vec![
+        "config.yaml",
+        "~/.config/rufaco/config.yaml",
+        "/etc/rufaco/config.yaml",
+    ];
+
+    let selected_config = config_search_paths.iter().find_map(|f| {
+        if std::path::Path::new(f).exists() {
+            Some(f)
+        } else {
+            None
+        }
+    });
+
+    let mut rufaco_conf = config::load_config(selected_config.unwrap());
     let hwmons = parse_hwmons().unwrap();
     let mut sensors: HashMap<String, TempSensorContainer> = HashMap::new();
     let mut fans: HashMap<String, FanContainer> = HashMap::new();

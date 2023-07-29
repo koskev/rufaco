@@ -85,8 +85,8 @@ pub struct FanCurve {
     pub function: CurveFunction,
 }
 
-pub fn load_config() -> RufacoConfig {
-    let config_content = std::fs::read_to_string("config.yaml").unwrap_or_default();
+pub fn load_config(path: &str) -> RufacoConfig {
+    let config_content = std::fs::read_to_string(path).unwrap_or_default();
     let config_yaml: RufacoConfig = serde_yaml::from_str(&config_content).unwrap();
     println!("{:?}", config_yaml);
     config_yaml
