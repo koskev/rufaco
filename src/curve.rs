@@ -9,16 +9,16 @@ use crate::{
     config,
 };
 
-pub type CurveContainer = Arc<Mutex<dyn Curve>>;
+pub type CurveContainer = Arc<Mutex<dyn ReadableValue>>;
 
-pub trait Curve: ReadableValue {}
+//pub trait Curve: ReadableValue {}
 
 pub struct LinearCurve {
     sensor: ReadableValueContainer,
     functions: BTreeMap<i32, (f32, f32)>,
 }
 
-impl Curve for LinearCurve {}
+//impl Curve for LinearCurve {}
 
 impl LinearCurve {
     pub fn new(sensor: ReadableValueContainer, conf: &config::LinearCurve) -> Self {
@@ -74,5 +74,51 @@ impl ReadableValue for LinearCurve {
             }
             None => return 0,
         }
+    }
+}
+
+pub struct StaticCurve {
+    pub value: i32,
+}
+
+//impl Curve for StaticCurve {}
+
+impl ReadableValue for StaticCurve {
+    fn get_value(&self) -> i32 {
+        self.value
+    }
+}
+
+pub struct MaximumCurve {
+    pub sensors: Vec<ReadableValueContainer>,
+}
+
+//impl Curve for MaximumCurve {}
+impl ReadableValue for MaximumCurve {
+    fn get_value(&self) -> i32 {
+        let max = self.sensors.iter().max_by(|a, b| {
+            let val_a = a.lock().unwrap().get_value();
+            let val_b = b.lock().unwrap().get_value();
+            val_a.cmp(&val_b)
+        });
+        let x = match max {
+            Some(val) => val.lock().unwrap().get_value(),
+            None => 0,
+        };
+        x
+    }
+}
+
+pub struct AverageCurve {
+    pub sensors: Vec<ReadableValueContainer>,
+}
+
+impl ReadableValue for AverageCurve {
+    fn get_value(&self) -> i32 {
+        let mut total = 0;
+        self.sensors.iter().for_each(|val| {
+            total += val.lock().unwrap().get_value();
+        });
+        total / self.sensors.len() as i32
     }
 }

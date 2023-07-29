@@ -15,10 +15,28 @@ pub struct LinearCurve {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct StaticCurve {
+    pub value: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MaximumCurve {
+    pub sensors: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AverageCurve {
+    pub sensors: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[allow(non_camel_case_types)]
 pub enum CurveFunction {
     linear(LinearCurve),
+    r#static(StaticCurve),
+    maximum(MaximumCurve),
+    average(AverageCurve),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -38,6 +56,8 @@ pub struct SensorConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FanConfig {
     pub id: String,
+    pub startpwm: u8,
+    pub minpwm: u8,
     pub sensor: SensorType,
     pub curve: String,
 }

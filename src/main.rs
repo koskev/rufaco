@@ -1,9 +1,18 @@
+use log::{info, trace, warn};
+use simplelog::{ColorChoice, TermLogger, TerminalMode};
+
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::{self, Duration},
 };
 
-use curve::{CurveContainer, LinearCurve};
+use common::ReadableValueContainer;
+use curve::{AverageCurve, CurveContainer, LinearCurve, MaximumCurve, StaticCurve};
 use libmedium::{
     hwmon::Hwmons,
     parse_hwmons,
@@ -17,6 +26,10 @@ mod fan;
 mod temperature;
 
 use fan::{FanContainer, FanSensor};
+use signal_hook::{
+    consts::{SIGINT, SIGTERM},
+    iterator::Signals,
+};
 use temperature::{TempSensor, TempSensorContainer};
 
 use crate::common::{UpdatableInput, UpdatableOutput};
@@ -28,12 +41,12 @@ fn load_hwmon_sensor(
     sensor_name: &String,
 ) -> Option<Box<dyn temp::TempSensor>> {
     // Load hwmon
-    println!("Loading hwmon config with name {}", chip_name);
+    info!("Loading hwmon config with name {}", chip_name);
     for hwmon in hwmons.hwmons_by_name(chip_name) {
-        println!("Loading hwmon {:?}", hwmon.name());
+        info!("Loading hwmon {:?}", hwmon.name());
         for (_, temp) in hwmon.temps() {
             if sensor_name == &temp.name() {
-                println!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
+                info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
                 return Some(Box::new(temp.clone()));
             }
         }
@@ -50,12 +63,12 @@ fn load_hwmon_fan(
     Option<Box<dyn WriteablePwmSensor>>,
 ) {
     // Load hwmon
-    println!("Loading hwmon config with name {}", chip_name);
+    info!("Loading hwmon config with name {}", chip_name);
     for hwmon in hwmons.hwmons_by_name(chip_name) {
-        println!("Loading hwmon {:?}", hwmon.name());
+        info!("Loading hwmon {:?}", hwmon.name());
         for (_, temp) in hwmon.writeable_fans() {
             if sensor_name == &temp.name() {
-                println!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
+                info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
                 let fan_input = Box::new(temp.clone());
                 let fan_pwm = Box::new(hwmon.writeable_pwm(temp.index()).unwrap().clone());
                 return (Some(fan_input), Some(fan_pwm));
@@ -66,6 +79,14 @@ fn load_hwmon_fan(
 }
 
 fn main() {
+    TermLogger::init(
+        log::LevelFilter::Debug,
+        simplelog::Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )
+    .unwrap();
+
     let rufaco_conf = config::load_config();
     let hwmons = parse_hwmons().unwrap();
     let mut sensors: HashMap<String, TempSensorContainer> = HashMap::new();
@@ -84,13 +105,77 @@ fn main() {
     }
 
     for curveconf in &rufaco_conf.curves {
+        let id = curveconf.id.clone();
+        info!("Loading curve {id}");
         match &curveconf.function {
             config::CurveFunction::linear(curve) => {
-                let sensor = sensors[&curve.sensor].clone();
+                // TODO: refactor to use function? Borrow problem
+                let sensor: ReadableValueContainer;
+                let sensor_id = &curve.sensor;
+                info!("Searching for {}", sensor_id);
+                if sensors.contains_key(sensor_id) {
+                    sensor = sensors[sensor_id].clone();
+                } else if curves.contains_key(sensor_id) {
+                    sensor = curves[sensor_id].clone();
+                } else {
+                    // FIXME: Configs are sensitive to the order.
+                    todo!(
+                        "Config doesn't contain {}! Be sure to place them in the correct order",
+                        sensor_id
+                    )
+                }
                 curves.insert(
                     curveconf.id.clone(),
                     Arc::new(Mutex::new(LinearCurve::new(sensor, curve))),
                 );
+            }
+            config::CurveFunction::r#static(curve) => {
+                let sc = StaticCurve { value: curve.value };
+                curves.insert(id, Arc::new(Mutex::new(sc)));
+            }
+            config::CurveFunction::maximum(curve) => {
+                let mut mc_sensors: Vec<ReadableValueContainer> = vec![];
+                for sensor_id in &curve.sensors {
+                    let sensor: ReadableValueContainer;
+                    if sensors.contains_key(sensor_id) {
+                        sensor = sensors[sensor_id].clone();
+                    } else if curves.contains_key(sensor_id) {
+                        sensor = curves[sensor_id].clone();
+                    } else {
+                        // FIXME: Configs are sensitive to the order.
+                        todo!(
+                            "Config doesn't contain {}! Be sure to place them in the correct order",
+                            sensor_id
+                        )
+                    }
+                    mc_sensors.push(sensor);
+                }
+                let mc = MaximumCurve {
+                    sensors: mc_sensors,
+                };
+                curves.insert(id, Arc::new(Mutex::new(mc)));
+            }
+            config::CurveFunction::average(curve) => {
+                let mut ac_sensors: Vec<ReadableValueContainer> = vec![];
+                for sensor_id in &curve.sensors {
+                    let sensor: ReadableValueContainer;
+                    if sensors.contains_key(sensor_id) {
+                        sensor = sensors[sensor_id].clone();
+                    } else if curves.contains_key(sensor_id) {
+                        sensor = curves[sensor_id].clone();
+                    } else {
+                        // FIXME: Configs are sensitive to the order.
+                        todo!(
+                            "Config doesn't contain {}! Be sure to place them in the correct order",
+                            sensor_id
+                        )
+                    }
+                    ac_sensors.push(sensor);
+                }
+                let ac = AverageCurve {
+                    sensors: ac_sensors,
+                };
+                curves.insert(id, Arc::new(Mutex::new(ac)));
             }
         }
     }
@@ -113,8 +198,19 @@ fn main() {
         }
     }
 
+    let running = Arc::new(AtomicBool::new(true));
+    let mut stop_signal = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+    let running_copy = running.clone();
+
+    thread::spawn(move || {
+        for _sig in stop_signal.forever() {
+            running_copy.store(false, Ordering::SeqCst);
+            info!("Stopping program...");
+        }
+    });
+
     // Update
-    loop {
+    while running.load(Ordering::SeqCst) {
         // First update all sensors
         sensors.iter_mut().for_each(|(_id, sensor)| {
             sensor.lock().unwrap().update_input();
@@ -122,7 +218,12 @@ fn main() {
 
         // Then update all fans
         fans.iter().for_each(|(_id, fan)| {
+            //fan.lock()
+            //    .unwrap()
+            //    .measure_fancurve(Duration::from_millis(100), 15);
             fan.lock().unwrap().update_output();
         });
+        let sleep_duration = time::Duration::from_millis(100);
+        thread::sleep(sleep_duration);
     }
 }
