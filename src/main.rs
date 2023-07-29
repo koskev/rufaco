@@ -90,17 +90,6 @@ impl Fan<'_> {
     }
 }
 
-fn get_filter_for_item(item: &String, filter_map: &HashMap<String, Vec<String>>) -> Vec<String> {
-    let mut filter_list = vec![];
-    for (chip_filter, feature_filter) in filter_map {
-        let chip_regex = Regex::new(&chip_filter).unwrap();
-        if chip_regex.is_match(item) {
-            filter_list.append(&mut feature_filter.clone());
-        }
-    }
-    filter_list
-}
-
 fn filter_list<'a, T: std::iter::IntoIterator<Item = &'a String>>(
     item: &String,
     list: T,
@@ -109,6 +98,7 @@ fn filter_list<'a, T: std::iter::IntoIterator<Item = &'a String>>(
     let re = Regex::new(item).unwrap();
     let mut matches = vec![];
     for test_str in list {
+        println!("Testing {} with {}", test_str, item);
         if re.is_match(&test_str) {
             matches.push(test_str.clone());
         }
@@ -116,12 +106,20 @@ fn filter_list<'a, T: std::iter::IntoIterator<Item = &'a String>>(
     matches
 }
 
-fn filter_sensors(sensor_list: SensorList, filter: HashMap<String, Vec<String>>) {
-    for (chip_filter, sensor_filter_list) in &filter {
-        let mut chip_matches = filter_list(chip_filter, sensor_list.keys());
+fn filter_chip_or_feature<
+    'a,
+    T1: std::iter::IntoIterator<Item = &'a String> + Clone,
+    T2: std::iter::IntoIterator<Item = &'a String>,
+>(
+    sensor_list: T1,
+    filter: T2,
+) -> HashMap<String, String> {
+    let mut sensors: HashMap<String, String> = HashMap::new();
+    for sensor_filter in filter {
+        let chip_matches = filter_list(sensor_filter, sensor_list.clone());
         // Check if we only have a single match
         if chip_matches.len() != 1 {
-            println!("Unable to find chip for {}", chip_filter);
+            println!("Unable to find sensor for {}", sensor_filter);
             if chip_matches.len() == 0 {
                 println!("No possible matches found");
             } else {
@@ -132,11 +130,21 @@ fn filter_sensors(sensor_list: SensorList, filter: HashMap<String, Vec<String>>)
             }
             continue;
         }
-        println!("Found match for {}: {}", chip_filter, chip_matches[0]);
+        println!("Found match for {}: {}", sensor_filter, chip_matches[0]);
+        sensors.insert(sensor_filter.to_string(), chip_matches[0].to_string());
+    }
+    sensors
+}
+
+fn filter_sensorlist(sensor_list: SensorList, filter: HashMap<String, Vec<String>>) {
+    let chips = filter_chip_or_feature(sensor_list.keys(), filter.keys());
+    for (chip_filter, chip) in chips {
         // Matching sensor filter
-        for sensor_filter in sensor_filter_list {
-            //let mut sensor_matches = filter_list(sensor_filter, sensor_list.get(chip_matches[0]));
-        }
+        println!("{} {}", chip_filter, chip);
+        filter_chip_or_feature(
+            sensor_list.get(&chip).unwrap().keys(),
+            filter.get(&chip_filter).unwrap(),
+        );
     }
 }
 
@@ -147,16 +155,16 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
         //println!("chip: {} {}", chip, chip.path().unwrap().to_str().unwrap());
         found_sensors.insert(chip_name.clone(), HashMap::new());
         for feature in chip.feature_iter() {
-            //println!("Feature: {}", feature);
+            let sensor_name = feature.to_string();
+            //println!("Feature: {}", feature.label().unwrap());
             match feature.sub_feature_by_kind(lm_sensors::value::Kind::TemperatureInput) {
                 Ok(subfeature) => {
-                    let sensor_name = subfeature.name().unwrap().unwrap_or_default().to_string();
                     let my_sensor = Sensor::new(sensors, &subfeature);
                     //my_sensors.push(my_sensor);
                     found_sensors
                         .get_mut(&chip_name)
                         .unwrap_or(&mut HashMap::new())
-                        .insert(sensor_name, SensorType::Sensor(my_sensor));
+                        .insert(sensor_name.clone(), SensorType::Sensor(my_sensor));
                 }
                 Err(_) => (),
             }
@@ -172,8 +180,6 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
                     let re = Regex::new(r"fan([\d]+)_input").unwrap();
                     let matches = re.captures(&input_name).unwrap();
                     if matches.len() == 2 {
-                        let sensor_name =
-                            subfeature.name().unwrap().unwrap_or_default().to_string();
                         // construct pwm path
                         let chip_path = chip.path().unwrap();
                         let pwm_path = chip_path
@@ -184,7 +190,7 @@ fn get_all_sensors(sensors: &lm_sensors::LMSensors) -> SensorList {
                         found_sensors
                             .get_mut(&chip_name)
                             .unwrap_or(&mut HashMap::new())
-                            .insert(sensor_name, SensorType::Fan(fan));
+                            .insert(sensor_name.clone(), SensorType::Fan(fan));
                     }
                     //println!("{}", input_name);
                 }
@@ -200,10 +206,10 @@ fn main() {
 
     let mut sensor_filter: HashMap<String, Vec<String>> = HashMap::new();
     sensor_filter
-        .entry(".*".to_string())
+        .entry("coretemp-.*".to_string())
         .or_default()
         .push("Core 0".to_string());
     //print_chips_unsafe(&sensors);
     let all_sensors = get_all_sensors(&sensors);
-    filter_sensors(all_sensors, sensor_filter);
+    filter_sensorlist(all_sensors, sensor_filter);
 }
