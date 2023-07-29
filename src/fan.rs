@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::VecDeque,
     error::Error,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -265,7 +265,6 @@ impl ReadableValue for FanSensor {
 #[cfg(test)]
 mod test {
     use more_asserts::{assert_ge, assert_le};
-    use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
     use crate::curve::StaticCurve;
 

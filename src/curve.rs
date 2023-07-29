@@ -49,16 +49,6 @@ impl LinearCurve {
             functions: func_map,
         }
     }
-
-    fn get_neighbors<T>(
-        val: i32,
-        map: &BTreeMap<i32, T>,
-    ) -> (Option<(&i32, &T)>, Option<(&i32, &T)>) {
-        let mut before = map.range((Bound::Unbounded, Bound::Included(val)));
-        let mut after = map.range((Bound::Excluded(val), Bound::Unbounded));
-
-        (before.next_back(), after.next())
-    }
 }
 
 impl ReadableValue for LinearCurve {

@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
@@ -18,7 +18,7 @@ use curve::{AverageCurve, CurveContainer, LinearCurve, MaximumCurve, StaticCurve
 use libmedium::{
     hwmon::Hwmons,
     parse_hwmons,
-    sensors::{fan::WriteableFanSensor, pwm::WriteablePwmSensor, temp, Sensor},
+    sensors::{temp, Sensor},
 };
 
 mod common;
@@ -40,7 +40,6 @@ use crate::{
     fan::{HwmonFan, HwmonPwm},
 };
 
-// TODO: refactor fan and sensor
 fn load_hwmon_sensor(
     hwmons: &Hwmons,
     chip_name: &String,
@@ -139,6 +138,7 @@ fn main() {
 
     let selected_config = config_search_paths.iter().find_map(|f| {
         if std::path::Path::new(f).exists() {
+            info!("Loading config from {f}");
             Some(f)
         } else {
             None
@@ -167,7 +167,6 @@ fn main() {
         info!("Loading curve {id}");
         match &curveconf.function {
             config::CurveFunction::linear(curve) => {
-                // TODO: refactor to use function? Borrow problem
                 let sensor_id = &curve.sensor;
                 info!("Searching for {}", sensor_id);
                 let sensor = get_sensor(sensor_id, &sensors, &curves);
