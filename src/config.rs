@@ -125,7 +125,7 @@ fn get_sensor(
 }
 
 impl RufacoConfig {
-    fn load_sensors(&mut self, hwmons: &Hwmons) -> HashMap<String, Arc<Mutex<TempSensor>>> {
+    fn load_sensors(&mut self, hwmons: &Hwmons) -> HashMap<String, TempSensorContainer> {
         let mut sensors: HashMap<String, TempSensorContainer> = HashMap::new();
         for sensorconf in &self.sensors {
             match &sensorconf.sensor {
@@ -145,8 +145,8 @@ impl RufacoConfig {
 
     fn load_curves(
         &mut self,
-        sensors: HashMap<String, Arc<Mutex<TempSensor>>>,
-    ) -> HashMap<String, Arc<Mutex<dyn ReadableValue>>> {
+        sensors: HashMap<String, TempSensorContainer>,
+    ) -> HashMap<String, ReadableValueContainer> {
         let mut curves: HashMap<String, CurveContainer> = HashMap::new();
         for curveconf in &self.curves {
             let id = curveconf.id.clone();
@@ -203,7 +203,7 @@ impl RufacoConfig {
         &mut self,
         curves: HashMap<String, CurveContainer>,
         hwmons: &Hwmons,
-    ) -> HashMap<String, Arc<Mutex<FanSensor>>> {
+    ) -> HashMap<String, FanContainer> {
         let mut fans: HashMap<String, FanContainer> = HashMap::new();
         for sensorconf in &self.fans {
             match &sensorconf.sensor {
@@ -226,7 +226,7 @@ impl RufacoConfig {
         fans
     }
 
-    pub fn create_all_sensors(&mut self) -> HashMap<String, Arc<Mutex<FanSensor>>> {
+    pub fn create_all_sensors(&mut self) -> HashMap<String, FanContainer> {
         let hwmons = parse_hwmons().unwrap();
         let mut sensors = self.load_sensors(&hwmons);
         let mut curves = self.load_curves(sensors);
