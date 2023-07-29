@@ -75,7 +75,7 @@ fn main() {
 
     let running = Arc::new(AtomicBool::new(true));
     let rufaco_conf = config::load_config(selected_config.unwrap());
-    let fan_hub = FanHub::new(rufaco_conf, args.measure_delay, running.clone());
+    let mut fan_hub = FanHub::new(rufaco_conf, args.measure_delay, running.clone());
 
     let mut stop_signal = Signals::new([SIGTERM, SIGINT]).unwrap();
     let running_copy = running.clone();

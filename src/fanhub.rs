@@ -69,7 +69,7 @@ impl FanHub {
 
     fn load_curves(
         config: &RufacoConfig,
-        sensors: HashMap<String, TempSensorContainer>,
+        sensors: &HashMap<String, TempSensorContainer>,
     ) -> HashMap<String, ReadableValueContainer> {
         let mut curves: HashMap<String, CurveContainer> = HashMap::new();
         for curveconf in &config.curves {
@@ -125,7 +125,7 @@ impl FanHub {
 
     fn load_fans(
         config: &RufacoConfig,
-        curves: HashMap<String, CurveContainer>,
+        curves: &HashMap<String, CurveContainer>,
         hwmons: &Hwmons,
     ) -> HashMap<String, FanContainer> {
         let mut fans: HashMap<String, FanContainer> = HashMap::new();
@@ -150,7 +150,7 @@ impl FanHub {
         fans
     }
 
-    fn setup_fans(&self, measure_delay: u64, running: Arc<AtomicBool>) {
+    fn setup_fans(&mut self, measure_delay: u64, running: Arc<AtomicBool>) {
         // Create the fan parameters if they don't exist
         self.fans.iter().for_each(|(_id, fan_mutex)| {
             let mut fan = fan_mutex.lock().unwrap();
@@ -190,10 +190,10 @@ impl FanHub {
 
     pub fn new(config: RufacoConfig, measure_delay: u64, running: Arc<AtomicBool>) -> Self {
         let hwmons = parse_hwmons().unwrap();
-        let mut sensors = FanHub::load_sensors(&config, &hwmons);
-        let mut curves = FanHub::load_curves(&config, sensors);
-        let mut fans = FanHub::load_fans(&config, curves, &hwmons);
-        let new_fanhub = Self {
+        let sensors = FanHub::load_sensors(&config, &hwmons);
+        let curves = FanHub::load_curves(&config, &sensors);
+        let fans = FanHub::load_fans(&config, &curves, &hwmons);
+        let mut new_fanhub = Self {
             config,
             sensors,
             curves,
@@ -205,7 +205,7 @@ impl FanHub {
         new_fanhub
     }
 
-    pub fn update(&self) {
+    pub fn update(&mut self) {
         // First update all sensors
         self.sensors.iter_mut().for_each(|(_id, sensor)| {
             sensor.lock().unwrap().update_input();
