@@ -2,13 +2,10 @@
 use lm_sensors::prelude::*;
 
 struct Sensor<'a> {
-    value: i32,
-    min_value: i32,
-    max_value: i32,
-    chip: lm_sensors::ChipRef<'a>,
+    sensors: &'a lm_sensors::LMSensors,
+    raw_chip: sensors_sys::sensors_chip_name,
     raw_feature: sensors_sys::sensors_feature,
-    sensor_facility: &'a lm_sensors::LMSensors,
-    feature: lm_sensors::FeatureRef<'a>,
+    raw_subfeature: sensors_sys::sensors_subfeature,
 }
 
 //struct Fan<'a> {
@@ -17,53 +14,56 @@ struct Sensor<'a> {
 //}
 
 impl Sensor<'_> {
-    fn new<'a>(
-        chip: lm_sensors::ChipRef<'a>,
-        raw_feature: sensors_sys::sensors_feature,
-        sensor_facility: &'a lm_sensors::LMSensors,
+    fn new<'a, 'b>(
+        sensors: &'a lm_sensors::LMSensors,
+        subfeature: &'b lm_sensors::SubFeatureRef<'b>,
     ) -> Sensor<'a> {
-        let feature: lm_sensors::FeatureRef;
-        // FIXME: Since I am a Rust noob, I have no clue why I can't save a FeatureRef
-        unsafe {
-            feature = sensor_facility.new_feature_ref(chip, raw_feature.clone());
-        }
-        let new_sensor = Sensor {
-            max_value: 0,
-            min_value: 0,
-            value: 0,
-            chip,
-            raw_feature,
-            sensor_facility,
-            feature,
-        };
-        new_sensor
-    }
+        let feature = subfeature.feature();
+        let chip = feature.chip();
 
+        let raw_chip = chip.as_ref();
+        let raw_feature = feature.as_ref();
+        let raw_subfeature = subfeature.as_ref();
+        Sensor {
+            sensors,
+            raw_chip: *raw_chip,
+            raw_feature: *raw_feature,
+            raw_subfeature: *raw_subfeature,
+        }
+    }
     fn print_value(&self) {
-        println!("chip: {}", self.value);
-        println!("{}", self.get_feature().name().unwrap().unwrap());
+        println!("chip: {}", self.read_val().unwrap());
     }
 
-    fn get_feature(&self) -> lm_sensors::FeatureRef {
-        let feature: lm_sensors::FeatureRef;
-        // FIXME: Since I am a Rust noob, I have no clue why I can't save a FeatureRef
-        unsafe {
-            feature = self
-                .sensor_facility
-                .new_feature_ref(self.chip, &self.raw_feature);
-        }
-        feature
+    // TODO: since I am a noob I need to reconstruct this every read
+    pub fn read_val(&self) -> Result<lm_sensors::Value, lm_sensors::errors::Error> {
+        let new_chip = unsafe { self.sensors.new_chip_ref(&self.raw_chip) };
+        let new_feature = unsafe { self.sensors.new_feature_ref(new_chip, &self.raw_feature) };
+        let new_subfeature = unsafe {
+            self.sensors
+                .new_sub_feature_ref(new_feature, &self.raw_subfeature)
+        };
+        new_subfeature.value()
     }
 }
 
-fn print_chips(sensors: &lm_sensors::LMSensors) {
+fn create_chips(sensors: &lm_sensors::LMSensors) {
     let mut my_sensors = vec![];
     for chip in sensors.chip_iter(None) {
         println!("chip: {}", chip);
         for feature in chip.feature_iter() {
-            println!("feature: {}", feature);
-            let new_sensor = Sensor::new(chip, *feature.as_ref(), sensors);
-            my_sensors.push(new_sensor);
+            match feature.sub_feature_by_kind(lm_sensors::value::Kind::TemperatureInput) {
+                Ok(subfeature) => {
+                    let raw_chip = chip.as_ref();
+                    let raw_feature = feature.as_ref();
+                    let raw_subfeature = subfeature.as_ref();
+
+                    let my_sensor = Sensor::new(sensors, &subfeature);
+
+                    my_sensors.push(my_sensor);
+                }
+                Err(_) => (),
+            }
         }
     }
 
@@ -75,5 +75,5 @@ fn print_chips(sensors: &lm_sensors::LMSensors) {
 fn main() {
     let sensors = lm_sensors::Initializer::default().initialize().unwrap();
     //print_chips_unsafe(&sensors);
-    print_chips(&sensors);
+    create_chips(&sensors);
 }
