@@ -49,7 +49,7 @@ fn load_hwmon_sensor(
     info!("Loading hwmon config with name {}", chip_name);
     for hwmon in hwmons.hwmons_by_name(chip_name) {
         info!("Loading hwmon {:?}", hwmon.name());
-        for (_, temp) in hwmon.temps() {
+        for temp in hwmon.temps().values() {
             if sensor_name == &temp.name() {
                 info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
                 return Some(Box::new(temp.clone()));
@@ -59,16 +59,13 @@ fn load_hwmon_sensor(
     None
 }
 
-fn load_hwmon_fan(
-    hwmons: &Hwmons,
-    chip_name: &String,
-    sensor_name: &String,
-) -> (Option<Box<dyn FanInput>>, Option<Box<dyn FanOutput>>) {
+type FanInputOutput = (Option<Box<dyn FanInput>>, Option<Box<dyn FanOutput>>);
+fn load_hwmon_fan(hwmons: &Hwmons, chip_name: &String, sensor_name: &String) -> FanInputOutput {
     // Load hwmon
     info!("Loading hwmon config with name {}", chip_name);
     for hwmon in hwmons.hwmons_by_name(chip_name) {
         info!("Loading hwmon {:?}", hwmon.name());
-        for (_, temp) in hwmon.writeable_fans() {
+        for temp in hwmon.writeable_fans().values() {
             if sensor_name == &temp.name() {
                 info!("Matched hwmon {} and sensor {}", hwmon.name(), temp.name());
                 let fan_input = Box::new(HwmonFan {
@@ -136,12 +133,12 @@ fn main() {
         "/etc/rufaco/config.yaml",
     ];
 
-    let selected_config = config_search_paths.iter().find_map(|f| {
+    let selected_config = config_search_paths.iter().find(|f| {
         if std::path::Path::new(f).exists() {
             info!("Loading config from {f}");
-            Some(f)
+            true
         } else {
-            None
+            false
         }
     });
 
@@ -229,7 +226,7 @@ fn main() {
     }
 
     let running = Arc::new(AtomicBool::new(true));
-    let mut stop_signal = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+    let mut stop_signal = Signals::new([SIGTERM, SIGINT]).unwrap();
     let running_copy = running.clone();
 
     thread::spawn(move || {

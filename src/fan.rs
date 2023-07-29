@@ -58,8 +58,8 @@ impl FanInput for HwmonFan {
     fn get_input(&self) -> Result<AngularVelocity, Box<dyn Error>> {
         let val: Result<AngularVelocity, libmedium::sensors::Error> = self.fan_input.read_input();
         match val {
-            Ok(speed) => return Ok(speed),
-            Err(err) => return Err(Box::new(err)),
+            Ok(speed) => Ok(speed),
+            Err(err) => Err(Box::new(err)),
         }
     }
 }
@@ -83,14 +83,8 @@ impl FanSensor {
         fan_pwm: Box<dyn FanOutput>,
         curve: CurveContainer,
     ) -> Self {
-        let min_pwm = match conf.minpwm {
-            Some(pwm) => pwm,
-            None => 0,
-        };
-        let start_pwm = match conf.startpwm {
-            Some(pwm) => pwm,
-            None => 0,
-        };
+        let min_pwm = conf.minpwm.unwrap_or(0);
+        let start_pwm = conf.startpwm.unwrap_or(0);
         Self {
             id: conf.id.clone(),
             fan_input,
@@ -148,7 +142,7 @@ impl FanSensor {
                 );
             }
         }
-        return Some(mean);
+        Some(mean)
     }
 
     pub fn measure_fan(
@@ -238,7 +232,7 @@ impl UpdatableOutput for FanSensor {
         min_pwm = (min_pwm + 3) * (percentage > 0.0) as u8;
         let pwm_range = 255 - min_pwm;
         let pwm_val = percentage * pwm_range as f32 + min_pwm as f32;
-        let _ = self.fan_pwm.set_output(pwm_val as u8);
+        self.fan_pwm.set_output(pwm_val as u8);
         trace!(
             "Got value {percentage} for fan {} pwm {pwm_val} min pwm {min_pwm}",
             self.id,

@@ -64,9 +64,9 @@ impl ReadableValue for LinearCurve {
                 let m = val.1 .0;
                 let b = val.1 .1;
                 let x = input as f32;
-                return (m * x + b) as i32;
+                (m * x + b) as i32
             }
-            None => return 0,
+            None => 0,
         }
     }
 }
@@ -146,7 +146,7 @@ impl ReadableValue for PidCurve {
         let mut retval = 0;
 
         if output.output < 0.0 {
-            retval = output.output as i32 * -1;
+            retval = -(output.output as i32);
         }
 
         debug!(
@@ -159,7 +159,7 @@ impl ReadableValue for PidCurve {
     }
 
     fn get_value(&self) -> i32 {
-        self.last_val as i32
+        self.last_val
     }
 }
 

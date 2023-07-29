@@ -25,7 +25,7 @@ impl TempSensor {
     }
 
     fn get_temperature(&self) -> Result<Temperature, libmedium::sensors::Error> {
-        return self.sensor.read_input();
+        self.sensor.read_input()
     }
 }
 
