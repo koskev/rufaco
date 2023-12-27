@@ -1,16 +1,14 @@
 use clap::Parser;
 use fanhub::FanHub;
-use log::{debug, error, info, warn};
+use log::{debug, info};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 use std::{
-    io::Write,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread,
-    time::{self, Duration},
+    thread, time,
 };
 
 mod common;

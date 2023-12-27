@@ -1,7 +1,6 @@
 use std::io::Write;
 use std::{
-    collections::{HashMap, HashSet},
-    fs::write,
+    collections::HashMap,
     sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
@@ -55,7 +54,7 @@ impl FanHub {
             match &sensorconf.sensor {
                 config::SensorType::hwmon(conf) => {
                     let temp_sensor =
-                        hwmon::load_hwmon_sensor(&hwmons, &conf.chip, &conf.name).unwrap();
+                        hwmon::load_hwmon_sensor(hwmons, &conf.chip, &conf.name).unwrap();
                     let rufaco_sensor =
                         Arc::new(Mutex::new(TempSensor::new(sensorconf, temp_sensor)));
                     let id = rufaco_sensor.lock().unwrap().id.clone();
@@ -79,7 +78,7 @@ impl FanHub {
                 config::CurveFunction::linear(curve) => {
                     let sensor_id = &curve.sensor;
                     info!("Searching for {}", sensor_id);
-                    let sensor = get_sensor(sensor_id, &sensors, &curves);
+                    let sensor = get_sensor(sensor_id, sensors, &curves);
                     curves.insert(
                         id,
                         Arc::new(Mutex::new(curve::LinearCurve::new(sensor, curve))),
@@ -92,7 +91,7 @@ impl FanHub {
                 config::CurveFunction::maximum(curve) => {
                     let mut mc_sensors: Vec<ReadableValueContainer> = vec![];
                     for sensor_id in &curve.sensors {
-                        let sensor = get_sensor(sensor_id, &sensors, &curves);
+                        let sensor = get_sensor(sensor_id, sensors, &curves);
                         mc_sensors.push(sensor);
                     }
                     let mc = curve::MaximumCurve {
@@ -103,7 +102,7 @@ impl FanHub {
                 config::CurveFunction::average(curve) => {
                     let mut ac_sensors: Vec<ReadableValueContainer> = vec![];
                     for sensor_id in &curve.sensors {
-                        let sensor = get_sensor(sensor_id, &sensors, &curves);
+                        let sensor = get_sensor(sensor_id, sensors, &curves);
                         ac_sensors.push(sensor);
                     }
                     let ac = curve::AverageCurve {
@@ -113,7 +112,7 @@ impl FanHub {
                 }
                 config::CurveFunction::pid(curve) => {
                     let sensor_id = &curve.sensor;
-                    let sensor = get_sensor(sensor_id, &sensors, &curves);
+                    let sensor = get_sensor(sensor_id, sensors, &curves);
                     let pid_curve =
                         curve::PidCurve::new(sensor, curve.p, curve.i, curve.d, curve.target);
                     curves.insert(id, Arc::new(Mutex::new(pid_curve)));
@@ -135,6 +134,7 @@ impl FanHub {
                     let (fan_sensor, pwm_sensor) =
                         hwmon::load_hwmon_fan(hwmons, &conf.chip, &conf.name);
                     let curve = curves[&sensorconf.curve].clone();
+                    info!("Fan sensor: {:?}", conf);
                     let rufaco_sensor = Arc::new(Mutex::new(FanSensor::new(
                         sensorconf,
                         fan_sensor.unwrap(),
