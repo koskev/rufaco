@@ -81,7 +81,7 @@ pub struct FanSensor {
     /// PWM to start the fan
     pub start_pwm: u8,
 
-    /// Value the fan starts spinning at. Fan still spins below this value if it was spinning
+    /// Value the fan should start spinning at. Fan still spins below this value if it was spinning
     /// previously
     pub start_percent: f32,
     /// Time the fan is at 0%. Used to prevent spin up and down loop
@@ -328,6 +328,8 @@ mod test {
             curve: static_sensor.clone(),
             fan_pwm: Box::new(DummyPwm { last_val: 0 }),
             fan_input,
+            start_percent: 5.0,
+            zero_percent_time: None,
         };
         (fan, fan_input_val_2, static_sensor)
     }
@@ -360,9 +362,9 @@ mod test {
         assert_eq!(fan.get_value(), 0);
         static_sensor.lock().unwrap().value = 1;
         fan.update_output();
+        assert_le!(fan.fan_pwm.get_output(), 42);
         *fan_input_val.lock().unwrap() = 4242;
         fan.update_input();
-        assert_ge!(fan.fan_pwm.get_output(), 42);
         fan.update_output();
         assert_le!(fan.fan_pwm.get_output(), 42);
         assert_ge!(fan.fan_pwm.get_output(), 21);
