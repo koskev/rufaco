@@ -69,7 +69,12 @@ impl CurveFunction {
 #[allow(non_camel_case_types)]
 pub enum SensorType {
     hwmon(HwmonConfig),
-    file(String),
+    file(FileConfig),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FileConfig {
+    pub path: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -101,7 +106,7 @@ pub struct FanCurve {
 }
 
 pub fn load_config(path: &str) -> RufacoConfig {
-    let config_content = std::fs::read_to_string(path).unwrap_or_default();
+    let config_content = std::fs::read_to_string(path).unwrap();
     let config_yaml: RufacoConfig = serde_yaml::from_str(&config_content).unwrap();
     config_yaml
 }
@@ -137,14 +142,20 @@ impl RufacoConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{SensorConfig, SensorType};
+    use std::collections::BTreeMap;
 
-    use super::{CurveFunction, FanCurve, RufacoConfig};
+    use crate::config::{FileConfig, SensorConfig, SensorType};
+
+    use super::{load_config, CurveFunction, FanCurve, RufacoConfig};
 
     #[test]
     fn minimal_config() {
-        let test_sensor = SensorType::file("test".to_string());
-        let test_sensor2 = SensorType::file("test".to_string());
+        let test_sensor = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
+        let test_sensor2 = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
         let sensor_config = SensorConfig {
             id: "test_sensor1".to_string(),
             sensor: test_sensor,
@@ -175,10 +186,76 @@ mod tests {
         };
         assert!(conf_empty.validate());
     }
+    #[test]
+    fn all_curves_file() {
+        let config = load_config("test/all_curves.yaml");
+        assert!(config.validate());
+    }
+
+    #[test]
+    fn all_curves_config() {
+        let test_sensor = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
+        let test_sensor2 = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
+        let sensor_config = SensorConfig {
+            id: "test_sensor1".to_string(),
+            sensor: test_sensor,
+        };
+        let sensor_config2 = SensorConfig {
+            id: "test_sensor2".to_string(),
+            sensor: test_sensor2,
+        };
+
+        let curve_funcs = vec![
+            CurveFunction::maximum(super::MaximumCurve {
+                sensors: vec!["test_sensor1".to_string(), "test_sensor2".to_string()],
+            }),
+            CurveFunction::pid(super::PidCurve {
+                p: 1.0,
+                i: 1.0,
+                d: 1.0,
+                sensor: "test_sensor1".to_string(),
+                target: 5.0,
+            }),
+            CurveFunction::linear(super::LinearCurve {
+                sensor: "test_sensor1".to_string(),
+                steps: BTreeMap::new(),
+            }),
+            CurveFunction::r#static(super::StaticCurve { value: 1 }),
+            CurveFunction::average(super::AverageCurve {
+                sensors: vec!["test_sensor1".to_string(), "test_sensor2".to_string()],
+            }),
+        ];
+
+        let mut i = 0;
+        let curves: Vec<FanCurve> = curve_funcs
+            .into_iter()
+            .map(|c| {
+                i += 1;
+                FanCurve {
+                    id: format!("test_curve_{}", i),
+                    function: c,
+                }
+            })
+            .collect();
+
+        let conf = RufacoConfig {
+            sensors: vec![sensor_config, sensor_config2],
+            fans: vec![],
+            curves,
+        };
+
+        assert!(conf.validate());
+    }
 
     #[test]
     fn non_existing_sensor_config() {
-        let test_sensor = SensorType::file("test".to_string());
+        let test_sensor = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
         let sensor_config = SensorConfig {
             id: "test_sensor1".to_string(),
             sensor: test_sensor,

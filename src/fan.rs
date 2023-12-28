@@ -84,7 +84,7 @@ pub struct FanSensor {
     /// Value the fan should start spinning at. Fan still spins below this value if it was spinning
     /// previously
     pub start_percent: f32,
-    /// Time the fan is at 0%. Used to prevent spin up and down loop
+    /// Time the fan is at 0%. Only after staying for 10 sec at 0% the fan is turned off. Used to prevent spin up and down loop
     zero_percent_time: Option<time::Instant>,
 }
 
