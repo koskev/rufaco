@@ -292,6 +292,8 @@ impl ReadableValue for FanSensor {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use more_asserts::{assert_ge, assert_le};
 
     use crate::curve::StaticCurve;
@@ -368,5 +370,16 @@ mod test {
         fan.update_output();
         assert_le!(fan.fan_pwm.get_output(), 42);
         assert_ge!(fan.fan_pwm.get_output(), 21);
+
+        // Set sensor to a low value
+        static_sensor.lock().unwrap().value = 0;
+        // Expect the fan to be still spinning
+        fan.zero_percent_time = Some(Instant::now());
+        fan.update_output();
+        assert_ge!(fan.fan_pwm.get_output(), 21);
+        // Set time to a time in the past
+        fan.zero_percent_time = Some(Instant::now() - Duration::from_secs(100));
+        fan.update_output();
+        assert_eq!(fan.fan_pwm.get_output(), 0);
     }
 }
