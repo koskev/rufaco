@@ -3,9 +3,12 @@ use std::sync::{Arc, Mutex};
 use libmedium::{sensors::temp, units::Temperature};
 
 use crate::{
-    common::{ReadableValue, UpdatableInput},
+    common::{ReadableValue, SensorType, SensorValue, UpdatableInput},
     config::SensorConfig,
 };
+
+#[cfg(test)]
+use mockall::automock;
 
 pub type TempSensorContainer = Arc<Mutex<TempSensor>>;
 
@@ -15,6 +18,7 @@ pub struct TempSensor {
     pub last_val: i32,
 }
 
+#[cfg_attr(test, automock)]
 impl TempSensor {
     pub fn new(conf: &SensorConfig, sensor: Box<dyn temp::TempSensor>) -> Self {
         Self {
@@ -30,8 +34,8 @@ impl TempSensor {
 }
 
 impl ReadableValue for TempSensor {
-    fn get_value(&self) -> i32 {
-        self.last_val
+    fn get_value(&self) -> SensorValue {
+        SensorValue::new(SensorType::TEMPERATURE, 1. / 1000., self.last_val as f64)
     }
 }
 

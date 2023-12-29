@@ -7,7 +7,7 @@ use std::{
 use pid::Pid;
 
 use crate::{
-    common::{ReadableValue, ReadableValueContainer},
+    common::{ReadableValue, ReadableValueContainer, SensorType, SensorValue},
     config,
 };
 
@@ -52,19 +52,21 @@ impl LinearCurve {
 }
 
 impl ReadableValue for LinearCurve {
-    fn get_value(&self) -> i32 {
-        let input = self.sensor.lock().unwrap().get_value() / 1000;
+    fn get_value(&self) -> SensorValue {
+        let input = self.sensor.lock().unwrap().get_value().as_scaled_value() as i32;
         let before = self
             .functions
             .range((Bound::Unbounded, Bound::Included(input)))
             .next_back();
 
-        before.map_or(0, |val| {
+        let val = before.map_or(0, |val| {
             let m = val.1 .0;
             let b = val.1 .1;
             let x = input as f32;
             m.mul_add(x, b) as i32
-        })
+        });
+
+        SensorValue::new(SensorType::PERCENTAGE, 1., val as f64)
     }
 }
 
@@ -75,8 +77,12 @@ pub struct StaticCurve {
 //impl Curve for StaticCurve {}
 
 impl ReadableValue for StaticCurve {
-    fn get_value(&self) -> i32 {
-        self.value
+    fn get_value(&self) -> SensorValue {
+        SensorValue::new(
+            crate::common::SensorType::PERCENTAGE,
+            1.0,
+            self.value as f64,
+        )
     }
 }
 
@@ -86,13 +92,19 @@ pub struct MaximumCurve {
 
 //impl Curve for MaximumCurve {}
 impl ReadableValue for MaximumCurve {
-    fn get_value(&self) -> i32 {
+    fn get_value(&self) -> SensorValue {
         let max = self.sensors.iter().max_by(|a, b| {
             let val_a = a.lock().unwrap().get_value();
             let val_b = b.lock().unwrap().get_value();
-            val_a.cmp(&val_b)
+            // TODO: What to do if partial_cmd is None?
+            val_a
+                .partial_cmp(&val_b)
+                .unwrap_or(std::cmp::Ordering::Less)
         });
-        max.map_or(0, |val| val.lock().unwrap().get_value())
+        let val = max.map_or(SensorValue::new(SensorType::PERCENTAGE, 1.0, 0.0), |val| {
+            val.lock().unwrap().get_value()
+        });
+        val
     }
 }
 
@@ -101,12 +113,16 @@ pub struct AverageCurve {
 }
 
 impl ReadableValue for AverageCurve {
-    fn get_value(&self) -> i32 {
-        let mut total = 0;
+    fn get_value(&self) -> SensorValue {
+        let mut total: f64 = 0.;
         self.sensors.iter().for_each(|val| {
-            total += val.lock().unwrap().get_value();
+            total += val.lock().unwrap().get_value().as_scaled_value();
         });
-        total / self.sensors.len() as i32
+        SensorValue::new(
+            SensorType::PERCENTAGE,
+            1.,
+            total / self.sensors.len() as f64,
+        )
     }
 }
 
@@ -138,7 +154,7 @@ impl PidCurve {
 
 impl ReadableValue for PidCurve {
     fn update_value(&mut self) {
-        let input = self.sensor.lock().unwrap().get_value() as f32 / 1000.0;
+        let input = self.sensor.lock().unwrap().get_value().as_scaled_value() as f32;
         let output = self.pid.lock().unwrap().next_control_output(input);
 
         let retval = if output.output < 0.0 {
@@ -156,8 +172,8 @@ impl ReadableValue for PidCurve {
         self.last_val = retval;
     }
 
-    fn get_value(&self) -> i32 {
-        self.last_val
+    fn get_value(&self) -> SensorValue {
+        SensorValue::new(SensorType::PERCENTAGE, 1.0, self.last_val as f64)
     }
 }
 
@@ -190,11 +206,11 @@ mod test {
         assert_eq!(curve_functions[&100].1, -90.0);
 
         // Test acutal values
-        assert_eq!(linear_curve.get_value(), 10);
-        static_sensor.lock().unwrap().value = 100 * 1000;
-        assert_eq!(linear_curve.get_value(), 110);
-        static_sensor.lock().unwrap().value = 150 * 1000;
-        assert_eq!(linear_curve.get_value(), 210);
+        assert_eq!(linear_curve.get_value().as_scaled_value() as i32, 10);
+        static_sensor.lock().unwrap().value = 100;
+        assert_eq!(linear_curve.get_value().as_scaled_value() as i32, 110);
+        static_sensor.lock().unwrap().value = 150;
+        assert_eq!(linear_curve.get_value().as_scaled_value() as i32, 210);
     }
 
     #[test]
@@ -206,7 +222,7 @@ mod test {
             vec![static_sensor_low, static_sensor_mid, static_sensor_high];
         let max_curve = MaximumCurve { sensors };
 
-        assert_eq!(max_curve.get_value(), 100);
+        assert_eq!(max_curve.get_value().as_scaled_value() as i32, 100);
     }
 
     #[test]
@@ -218,31 +234,31 @@ mod test {
             vec![static_sensor_low, static_sensor_mid, static_sensor_high];
         let avg_curve = AverageCurve { sensors };
 
-        assert_eq!(avg_curve.get_value(), 53);
+        assert_eq!(avg_curve.get_value().as_scaled_value() as i32, 53);
     }
 
     #[test]
     fn test_curve_pid() {
-        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 10 }));
+        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 0 }));
         let mut pid_curve = PidCurve::new(static_sensor.clone(), 1.0, 1.0, 1.0, 0.0);
         pid_curve.update_value();
 
-        assert_eq!(pid_curve.get_value(), 0);
-        static_sensor.lock().unwrap().value = 100 * 1000;
+        assert_eq!(pid_curve.get_value().as_scaled_value() as i32, 0);
+        static_sensor.lock().unwrap().value = 100;
         pid_curve.update_value();
-        assert_eq!(pid_curve.get_value(), 100);
+        assert_eq!(pid_curve.get_value().as_scaled_value() as i32, 100);
 
         pid_curve.set_target(50.0);
-        static_sensor.lock().unwrap().value = 10 * 1000;
+        static_sensor.lock().unwrap().value = 10;
         pid_curve.update_value();
-        assert_eq!(pid_curve.get_value(), 0);
+        assert_eq!(pid_curve.get_value().as_scaled_value() as i32, 0);
 
-        static_sensor.lock().unwrap().value = 49 * 1000;
+        static_sensor.lock().unwrap().value = 49;
         pid_curve.update_value();
-        assert_gt!(pid_curve.get_value(), 0);
+        assert_gt!(pid_curve.get_value().as_scaled_value() as i32, 0);
 
-        static_sensor.lock().unwrap().value = 51 * 1000;
+        static_sensor.lock().unwrap().value = 51;
         pid_curve.update_value();
-        assert_gt!(pid_curve.get_value(), 0);
+        assert_gt!(pid_curve.get_value().as_scaled_value() as i32, 0);
     }
 }

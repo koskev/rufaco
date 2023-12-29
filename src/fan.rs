@@ -16,7 +16,7 @@ use libmedium::{
 use log::*;
 
 use crate::{
-    common::{ReadableValue, UpdatableInput, UpdatableOutput},
+    common::{ReadableValue, SensorType, SensorValue, UpdatableInput, UpdatableOutput},
     config::FanConfig,
     curve::CurveContainer,
 };
@@ -83,7 +83,7 @@ pub struct FanSensor {
 
     /// Value the fan should start spinning at. Fan still spins below this value if it was spinning
     /// previously
-    pub start_percent: f32,
+    pub start_percent: f64,
     /// Time the fan is at 0%. Only after staying for 10 sec at 0% the fan is turned off. Used to prevent spin up and down loop
     zero_percent_time: Option<time::Instant>,
 }
@@ -113,7 +113,7 @@ impl FanSensor {
 
 impl FanSensor {
     pub fn is_spinning(&self) -> bool {
-        self.get_value() != 0
+        self.get_value().as_scaled_value() >= 1.0
     }
 
     fn measure_pwm(
@@ -135,7 +135,7 @@ impl FanSensor {
             }
             thread::sleep(wait_time);
             self.update_input();
-            let rpm = self.get_value();
+            let rpm = self.get_value().as_scaled_value() as i32;
             rpms.push_front(rpm);
             if rpms.len() > 5 {
                 rpms.pop_back();
@@ -235,7 +235,8 @@ impl FanSensor {
 impl UpdatableOutput for FanSensor {
     fn update_output(&mut self) {
         self.update_input();
-        let percentage = self.curve.lock().unwrap().get_value() as f32 / 100.;
+        let percentage = self.curve.lock().unwrap().get_value().as_scaled_value();
+        println!("{}", percentage);
         // TODO: implement start pwm
         let mut min_pwm = if self.is_spinning() {
             self.min_pwm
@@ -246,12 +247,12 @@ impl UpdatableOutput for FanSensor {
         // add 3 for safety
         //min_pwm = min_pwm + 3;
 
-        if percentage < self.start_percent && self.get_value() == 0 {
+        if percentage < self.start_percent && self.get_value().as_scaled_value() == 0.0 {
             // set to 0 if the fan is not spinning and we are below start_percent
             min_pwm = 0;
         }
 
-        if percentage < 0.1 {
+        if percentage < 10.0 {
             // fan is currenlty on. We don't use is spnning as we might be faster than the motor
             match self.zero_percent_time {
                 Some(time) => {
@@ -265,7 +266,7 @@ impl UpdatableOutput for FanSensor {
             self.zero_percent_time = None;
         }
         let pwm_range = 255 - min_pwm;
-        let pwm_val = percentage.mul_add(pwm_range as f32, min_pwm as f32);
+        let pwm_val = (percentage / 100.0).mul_add(pwm_range as f64, min_pwm as f64);
         self.fan_pwm.set_output(pwm_val as u8);
         trace!(
             "Got value {percentage} for fan {} pwm {pwm_val} min pwm {min_pwm}",
@@ -285,8 +286,8 @@ impl UpdatableInput for FanSensor {
 }
 
 impl ReadableValue for FanSensor {
-    fn get_value(&self) -> i32 {
-        self.last_val as i32
+    fn get_value(&self) -> SensorValue {
+        SensorValue::new(SensorType::RPM, 1.0, self.last_val as f64)
     }
 }
 
@@ -340,11 +341,11 @@ mod test {
     fn test_spinning() {
         let (mut fan, fan_input_val, _static_sensor) = init();
         fan.update_input();
-        assert_eq!(fan.get_value(), 0);
+        assert_eq!(fan.get_value().as_scaled_value(), 0.0);
         assert!(!fan.is_spinning());
         *fan_input_val.lock().unwrap() = 4242;
         fan.update_input();
-        assert_eq!(fan.get_value(), 4242);
+        assert_eq!(fan.get_value().as_scaled_value(), 4242.0);
         assert!(fan.is_spinning());
     }
 
@@ -361,7 +362,7 @@ mod test {
         *fan_input_val.lock().unwrap() = 0;
         fan.update_output();
         assert_eq!(fan.fan_pwm.get_output(), 0);
-        assert_eq!(fan.get_value(), 0);
+        assert_eq!(fan.get_value().as_scaled_value(), 0.0);
         static_sensor.lock().unwrap().value = 1;
         fan.update_output();
         assert_le!(fan.fan_pwm.get_output(), 42);
