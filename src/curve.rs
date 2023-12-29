@@ -173,14 +173,22 @@ mod test {
             sensor: "test".to_string(),
             steps: curve_steps,
         };
-        let linear_curve = LinearCurve::new(static_sensor, &curve_conf);
+        let linear_curve = LinearCurve::new(static_sensor.clone(), &curve_conf);
 
+        // Test curve parameter
         let curve_functions = &linear_curve.functions;
         assert_eq!(curve_functions.len(), 2);
         assert_eq!(curve_functions[&0].0, 1.0);
         assert_eq!(curve_functions[&0].1, 10.0);
         assert_eq!(curve_functions[&100].0, 2.0);
         assert_eq!(curve_functions[&100].1, -90.0);
+
+        // Test acutal values
+        assert_eq!(linear_curve.get_value(), 10);
+        static_sensor.lock().unwrap().value = 100 * 1000;
+        assert_eq!(linear_curve.get_value(), 110);
+        static_sensor.lock().unwrap().value = 150 * 1000;
+        assert_eq!(linear_curve.get_value(), 210);
     }
 
     #[test]
