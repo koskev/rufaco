@@ -130,6 +130,10 @@ impl PidCurve {
             last_val: 0,
         }
     }
+
+    pub fn set_target(&mut self, target: f32) {
+        self.pid.lock().unwrap().setpoint(target);
+    }
 }
 
 impl ReadableValue for PidCurve {
@@ -159,6 +163,8 @@ impl ReadableValue for PidCurve {
 
 #[cfg(test)]
 mod test {
+    use more_asserts::assert_gt;
+
     use super::*;
     use std::sync::{Arc, Mutex};
 
@@ -213,5 +219,30 @@ mod test {
         let avg_curve = AverageCurve { sensors };
 
         assert_eq!(avg_curve.get_value(), 53);
+    }
+
+    #[test]
+    fn test_curve_pid() {
+        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 10 }));
+        let mut pid_curve = PidCurve::new(static_sensor.clone(), 1.0, 1.0, 1.0, 0.0);
+        pid_curve.update_value();
+
+        assert_eq!(pid_curve.get_value(), 0);
+        static_sensor.lock().unwrap().value = 100 * 1000;
+        pid_curve.update_value();
+        assert_eq!(pid_curve.get_value(), 100);
+
+        pid_curve.set_target(50.0);
+        static_sensor.lock().unwrap().value = 10 * 1000;
+        pid_curve.update_value();
+        assert_eq!(pid_curve.get_value(), 0);
+
+        static_sensor.lock().unwrap().value = 49 * 1000;
+        pid_curve.update_value();
+        assert_gt!(pid_curve.get_value(), 0);
+
+        static_sensor.lock().unwrap().value = 51 * 1000;
+        pid_curve.update_value();
+        assert_gt!(pid_curve.get_value(), 0);
     }
 }
