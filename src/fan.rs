@@ -40,6 +40,7 @@ pub trait FanInput {
     fn get_input(&self) -> Result<AngularVelocity, Box<dyn Error>>;
 }
 
+#[cfg_attr(test, automock)]
 pub trait FanOutput {
     /// Set the fan output to pwm
     fn set_output(&mut self, pwm: u8);
@@ -343,6 +344,70 @@ mod test {
             static_sensor.clone(),
         );
         (fan, fan_input_val_2, static_sensor)
+    }
+
+    #[test]
+    fn test_measure() {
+        measure_fan(21, 42);
+        measure_fan(1, 1);
+        measure_fan(0, 0);
+    }
+
+    fn measure_fan(min_pwm: u8, start_pwm: u8) {
+        struct FanState {
+            pwm: u8,
+            running: bool,
+        }
+
+        let static_sensor = Arc::new(Mutex::new(StaticCurve { value: 0 }));
+        let fan_output_val = Arc::new(Mutex::new(FanState {
+            pwm: 0,
+            running: false,
+        }));
+        let mut fan_input = Box::new(MockFanInput::new());
+        let input_val = fan_output_val.clone();
+        // Take the current fan pwm and multiply it by 100 if the fan is spinning. Else return 0
+        fan_input.expect_get_input().returning(move || {
+            let fan_state = input_val.lock().unwrap();
+            let val = AngularVelocity::from_rpm(
+                fan_state.running as u32 * (fan_state.pwm as u32 + 1) * 100,
+            );
+            Ok(val)
+        });
+        let mut fan_output = Box::new(MockFanOutput::new());
+        let set_val = fan_output_val.clone();
+        // Set the output and spinning state if the min and start pwm allows it
+        fan_output.expect_set_output().returning(move |pwm: u8| {
+            let mut fan_state = set_val.lock().unwrap();
+            fan_state.pwm = pwm;
+            if fan_state.pwm < min_pwm {
+                fan_state.running = false;
+            } else if fan_state.pwm >= start_pwm {
+                fan_state.running = true;
+            }
+        });
+        let get_val = fan_output_val.clone();
+        fan_output
+            .expect_get_output()
+            .returning(move || get_val.lock().unwrap().pwm);
+
+        let sensor = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
+        let fan_config = FanConfig {
+            id: "test_sensor".to_string(),
+            minpwm: None,
+            startpwm: None,
+            curve: "dummy".to_string(),
+            sensor,
+        };
+        let mut fan = FanSensor::new(&fan_config, fan_input, fan_output, static_sensor.clone());
+        let range = fan
+            .measure_fan(Duration::from_nanos(0), 5, Arc::new(AtomicBool::new(true)))
+            .unwrap();
+
+        assert_eq!(range.0, min_pwm);
+        assert_eq!(range.1, start_pwm);
     }
 
     #[test]
