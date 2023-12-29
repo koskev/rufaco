@@ -297,7 +297,10 @@ mod test {
 
     use more_asserts::{assert_ge, assert_le};
 
-    use crate::curve::StaticCurve;
+    use crate::{
+        config::{FileConfig, SensorType},
+        curve::StaticCurve,
+    };
 
     use super::*;
 
@@ -323,17 +326,22 @@ mod test {
             let val = AngularVelocity::from_rpm(fan_input_val.lock().unwrap().clone());
             Ok(val)
         });
-        let fan = FanSensor {
+        let sensor = SensorType::file(FileConfig {
+            path: "test".to_string(),
+        });
+        let fan_config = FanConfig {
             id: "test_sensor".to_string(),
-            min_pwm: 21,
-            start_pwm: 42,
-            last_val: 0,
-            curve: static_sensor.clone(),
-            fan_pwm: Box::new(DummyPwm { last_val: 0 }),
-            fan_input,
-            start_percent: 5.0,
-            zero_percent_time: None,
+            minpwm: Some(21),
+            startpwm: Some(42),
+            curve: "dummy".to_string(),
+            sensor,
         };
+        let fan = FanSensor::new(
+            &fan_config,
+            fan_input,
+            Box::new(DummyPwm { last_val: 0 }),
+            static_sensor.clone(),
+        );
         (fan, fan_input_val_2, static_sensor)
     }
 
