@@ -10,7 +10,7 @@ libmedium = "0.7.0"
 serde_yaml = "0.9.16"
 serde = { version = "1.0.152", features = ["derive"] }
 signal-hook = "0.3.14"
-log = "0.4.17"
+log = "0.4.21"
 simplelog = "0.12.0"
 rayon = "1.6.1"
 pid = "4.0.0"
