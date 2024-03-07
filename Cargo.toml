@@ -12,7 +12,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 signal-hook = "0.3.17"
 log = "0.4.21"
 simplelog = "0.12.2"
-rayon = "1.6.1"
+rayon = "1.9.0"
 pid = "4.0.0"
 clap = { version = "4.5.2", features = ["derive"] }
 mockall = "0.11.3"
