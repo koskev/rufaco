@@ -1,0 +1,36 @@
+sensors:
+- id: test_sensor
+  sensor:
+    type: file
+    path: "test"
+curves:
+  - id: max_curve
+    function:
+      type: maximum
+      sensors:
+        - test_sensor
+  - id: avg_curve
+    function:
+      type: average
+      sensors:
+        - test_sensor
+  - id: linear_curve
+    function:
+      type: linear
+      sensor: test_sensor
+      steps:
+        1: 50
+        2: 100
+  - id: pid_curve
+    function:
+      type: pid
+      p: 1.0
+      i: 1.0
+      d: 1.0
+      sensor: "test_sensor"
+      target: 5.0
+  - id: static_curve
+    function:
+      type: static
+      value: 5
+fans:
