@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use libmedium::{sensors::temp, units::Temperature};
+use libmedium::{sensors::sync_sensors::temp, units::Temperature};
 
 use crate::{
     common::{ReadableValue, SensorType, SensorValue, UpdatableInput},

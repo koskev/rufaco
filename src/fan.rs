@@ -10,7 +10,7 @@ use std::{
 };
 
 use libmedium::{
-    sensors::{fan::WriteableFanSensor, pwm::WriteablePwmSensor},
+    sensors::sync_sensors::{fan::WriteableFanSensor, pwm::WriteablePwmSensor},
     units::{self, AngularVelocity},
 };
 use log::*;

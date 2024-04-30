@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use libmedium::{hwmon::Hwmons, parse_hwmons};
+use libmedium::{hwmon::sync_hwmon::Hwmons, parse_hwmons};
 use log::{debug, error, info, warn};
 
 use crate::{
