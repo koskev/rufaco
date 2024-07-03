@@ -3,7 +3,10 @@ use log::info;
 use crate::fan::{FanInput, FanOutput, HwmonFan, HwmonPwm};
 use libmedium::{
     hwmon::sync_hwmon::Hwmons,
-    sensors::sync_sensors::{temp, Sensor},
+    sensors::{
+        sync_sensors::{temp, SyncSensor},
+        Sensor,
+    },
 };
 
 pub fn load_hwmon_sensor(
