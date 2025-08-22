@@ -237,7 +237,6 @@ impl UpdatableOutput for FanSensor {
     fn update_output(&mut self) {
         self.update_input();
         let percentage = self.curve.lock().unwrap().get_value().as_scaled_value();
-        println!("{}", percentage);
         // TODO: implement start pwm
         let mut min_pwm = if self.is_spinning() {
             self.min_pwm
