@@ -9,7 +9,7 @@ edition = "2021"
 libmedium = "0.12.0"
 serde_yaml = "0.9.34"
 serde = { version = "1.0.201", features = ["derive"] }
-signal-hook = "0.3.17"
+signal-hook = "0.4.0"
 log = "0.4.21"
 simplelog = "0.12.2"
 rayon = "1.10.0"
